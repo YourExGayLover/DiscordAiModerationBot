@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "DiscordAiModeration.Bot": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "OPENAI_MODEL": "gpt-5-mini",
+        "SQLITE_PATH": "botdata.db"
+      }
+    }
+  }
+}
