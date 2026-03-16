@@ -7,4 +7,5 @@ public sealed class GuildSettings
     public long? PingRoleId { get; set; }
     public int ConfidenceThreshold { get; set; } = 70;
     public bool AiEnabled { get; set; } = true;
+    public bool UseSimplePrompts { get; set; }
 }

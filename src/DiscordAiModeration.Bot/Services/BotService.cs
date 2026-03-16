@@ -85,7 +85,12 @@ public sealed class BotService
                 .WithName("toggle-ai")
                 .WithDescription("Enable or disable AI moderation")
                 .WithType(ApplicationCommandOptionType.SubCommand)
-                .AddOption("enabled", ApplicationCommandOptionType.Boolean, "True to enable AI moderation", true));
+                .AddOption("enabled", ApplicationCommandOptionType.Boolean, "True to enable AI moderation", true))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("toggle-simple-prompts")
+                .WithDescription("Use a smaller, cheaper AI prompt format")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("enabled", ApplicationCommandOptionType.Boolean, "True to use simple prompts", true));
 
         var rulesCommand = new SlashCommandBuilder()
             .WithName("rules")
@@ -275,6 +280,18 @@ public sealed class BotService
                 settings.AiEnabled = enabled;
                 await _database.UpsertGuildSettingsAsync(settings);
                 await command.RespondAsync($"AI moderation {(enabled ? "enabled" : "disabled") }.", ephemeral: true);
+                break;
+            }
+            case "toggle-simple-prompts":
+            {
+                var enabled = Convert.ToBoolean(subCommand.Options.First().Value);
+                settings.UseSimplePrompts = enabled;
+                await _database.UpsertGuildSettingsAsync(settings);
+                await command.RespondAsync(
+                    enabled
+                        ? "Simple prompts enabled. The bot will use a shorter, cheaper moderation request."
+                        : "Simple prompts disabled. The bot will use the full moderation request.",
+                    ephemeral: true);
                 break;
             }
         }

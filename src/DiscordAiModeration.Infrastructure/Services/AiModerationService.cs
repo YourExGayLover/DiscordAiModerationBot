@@ -51,8 +51,8 @@ public sealed class AiModerationService : IAiModerationService
 
         AiDecision decision = provider switch
         {
-            "openai" => await _openAiService.EvaluateAsync(request, rules, examples, cancellationToken),
-            "ollama" or "llama" => await _ollamaService.EvaluateAsync(request, rules, examples, cancellationToken),
+            "openai" => await _openAiService.EvaluateAsync(request, settings, rules, examples, cancellationToken),
+            "ollama" or "llama" => await _ollamaService.EvaluateAsync(request, settings, rules, examples, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported AI provider: {_options.Provider}. Use 'openai' or 'ollama'.")
         };
 

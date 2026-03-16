@@ -26,6 +26,7 @@ public sealed class OllamaModerationService
 
     public async Task<AiDecision> EvaluateAsync(
         ModerationRequest request,
+        GuildSettings settings,
         IReadOnlyList<RuleRecord> rules,
         IReadOnlyList<FeedbackExample> examples,
         CancellationToken cancellationToken = default)
@@ -35,7 +36,7 @@ public sealed class OllamaModerationService
             : _options.OllamaBaseUrl.TrimEnd('/');
 
         var traceId = BuildTraceId(request);
-        var userPrompt = SharedPromptBuilder.BuildUserPrompt(request, rules, examples);
+        var userPrompt = SharedPromptBuilder.BuildUserPrompt(request, settings, rules, examples);
 
         var payload = new
         {
@@ -56,7 +57,7 @@ public sealed class OllamaModerationService
             },
             messages = new object[]
             {
-                new { role = "system", content = SharedPromptBuilder.BuildSystemPrompt() },
+                new { role = "system", content = SharedPromptBuilder.BuildSystemPrompt(settings) },
                 new { role = "user", content = userPrompt }
             }
         };

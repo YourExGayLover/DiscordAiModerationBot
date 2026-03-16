@@ -27,6 +27,7 @@ public sealed class OpenAiModerationService
 
     public async Task<AiDecision> EvaluateAsync(
         ModerationRequest request,
+        GuildSettings settings,
         IReadOnlyList<RuleRecord> rules,
         IReadOnlyList<FeedbackExample> examples,
         CancellationToken cancellationToken = default)
@@ -37,7 +38,7 @@ public sealed class OpenAiModerationService
         }
 
         var traceId = BuildTraceId(request);
-        var userPrompt = SharedPromptBuilder.BuildUserPrompt(request, rules, examples);
+        var userPrompt = SharedPromptBuilder.BuildUserPrompt(request, settings, rules, examples);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses");
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.OpenAiApiKey);
@@ -52,7 +53,7 @@ public sealed class OpenAiModerationService
                     role = "system",
                     content = new object[]
                     {
-                        new { type = "input_text", text = SharedPromptBuilder.BuildSystemPrompt() }
+                        new { type = "input_text", text = SharedPromptBuilder.BuildSystemPrompt(settings) }
                     }
                 },
                 new

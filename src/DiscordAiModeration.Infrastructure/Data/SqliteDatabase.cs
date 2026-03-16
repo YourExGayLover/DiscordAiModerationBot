@@ -29,7 +29,8 @@ public sealed class SqliteDatabase : IDatabase
                       AlertChannelId INTEGER NULL,
                       PingRoleId INTEGER NULL,
                       ConfidenceThreshold INTEGER NOT NULL DEFAULT 70,
-                      AiEnabled INTEGER NOT NULL DEFAULT 1
+                      AiEnabled INTEGER NOT NULL DEFAULT 1,
+                      UseSimplePrompts INTEGER NOT NULL DEFAULT 0
                   );
 
                   CREATE TABLE IF NOT EXISTS Rules (
@@ -61,6 +62,8 @@ public sealed class SqliteDatabase : IDatabase
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync(cancellationToken);
+
+        await EnsureColumnAsync(connection, "GuildSettings", "UseSimplePrompts", "ALTER TABLE GuildSettings ADD COLUMN UseSimplePrompts INTEGER NOT NULL DEFAULT 0;", cancellationToken);
     }
 
     public async Task<GuildSettings?> GetGuildSettingsAsync(long guildId, CancellationToken cancellationToken = default)
@@ -69,7 +72,7 @@ public sealed class SqliteDatabase : IDatabase
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT GuildId, AlertChannelId, PingRoleId, ConfidenceThreshold, AiEnabled FROM GuildSettings WHERE GuildId=$guildId";
+        command.CommandText = "SELECT GuildId, AlertChannelId, PingRoleId, ConfidenceThreshold, AiEnabled, UseSimplePrompts FROM GuildSettings WHERE GuildId=$guildId";
         command.Parameters.AddWithValue("$guildId", guildId);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -82,7 +85,8 @@ public sealed class SqliteDatabase : IDatabase
             AlertChannelId = reader.IsDBNull(1) ? null : reader.GetInt64(1),
             PingRoleId = reader.IsDBNull(2) ? null : reader.GetInt64(2),
             ConfidenceThreshold = reader.GetInt32(3),
-            AiEnabled = reader.GetInt64(4) == 1
+            AiEnabled = reader.GetInt64(4) == 1,
+            UseSimplePrompts = reader.GetInt64(5) == 1
         };
     }
 
@@ -93,13 +97,14 @@ public sealed class SqliteDatabase : IDatabase
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-                              INSERT INTO GuildSettings (GuildId, AlertChannelId, PingRoleId, ConfidenceThreshold, AiEnabled)
-                              VALUES ($guildId, $alertChannelId, $pingRoleId, $threshold, $enabled)
+                              INSERT INTO GuildSettings (GuildId, AlertChannelId, PingRoleId, ConfidenceThreshold, AiEnabled, UseSimplePrompts)
+                              VALUES ($guildId, $alertChannelId, $pingRoleId, $threshold, $enabled, $useSimplePrompts)
                               ON CONFLICT(GuildId) DO UPDATE SET
                                   AlertChannelId = excluded.AlertChannelId,
                                   PingRoleId = excluded.PingRoleId,
                                   ConfidenceThreshold = excluded.ConfidenceThreshold,
-                                  AiEnabled = excluded.AiEnabled;
+                                  AiEnabled = excluded.AiEnabled,
+                                  UseSimplePrompts = excluded.UseSimplePrompts;
                               """;
 
         command.Parameters.AddWithValue("$guildId", settings.GuildId);
@@ -107,6 +112,7 @@ public sealed class SqliteDatabase : IDatabase
         command.Parameters.AddWithValue("$pingRoleId", (object?)settings.PingRoleId ?? DBNull.Value);
         command.Parameters.AddWithValue("$threshold", settings.ConfidenceThreshold);
         command.Parameters.AddWithValue("$enabled", settings.AiEnabled ? 1 : 0);
+        command.Parameters.AddWithValue("$useSimplePrompts", settings.UseSimplePrompts ? 1 : 0);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -309,4 +315,31 @@ public sealed class SqliteDatabase : IDatabase
 
         return examples;
     }
+
+    private static async Task EnsureColumnAsync(
+        SqliteConnection connection,
+        string tableName,
+        string columnName,
+        string alterStatement,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({tableName});";
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        await reader.DisposeAsync();
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = alterStatement;
+        await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+    }
+
 }
