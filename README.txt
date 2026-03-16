@@ -1,15 +1,10 @@
-This zip contains the files needed to add Discord server rule import/export support.
+This update changes moderation alerts so they show a direct Discord message link instead of the channel mention.
 
-Copy these files into the matching folders in your project:
-- src/DiscordAiModeration.Bot/Services/BotService.cs
-- src/DiscordAiModeration.Bot/Models/RuleImportExportModels.cs
-- src/DiscordAiModeration.Core/Interfaces/IDatabase.cs
-- src/DiscordAiModeration.Infrastructure/Data/SqliteDatabase.cs
+Copy this file into your project, preserving the folder structure:
+- src/DiscordAiModeration.Bot/Services/ModerationQueue.cs
 
-What this adds:
-- /rules export
-- /rules import file:<json> [replace-existing:true|false]
-
-Notes:
-- Your Program.cs already registers AddHttpClient() in the current repo, so no required Program.cs change is included.
-- If your editor shows a formatting difference, that is expected.
+What changed:
+- Replaced the embed field "Channel" with "Message Link"
+- Added a Discord deep link in the format:
+  https://discord.com/channels/{guildId}/{channelId}/{messageId}
+- Added the same link to the console log when an alert is sent

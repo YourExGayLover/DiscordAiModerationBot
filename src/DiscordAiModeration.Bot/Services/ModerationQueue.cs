@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using Discord;
 using Discord.WebSocket;
 using DiscordAiModeration.Core.Interfaces;
 using DiscordAiModeration.Core.Models;
+using DiscordAiModeration.Infrastructure.Services;
 using Microsoft.Extensions.Logging;
 
 namespace DiscordAiModeration.Bot.Services;
@@ -28,7 +30,17 @@ public sealed class ModerationQueue
     }
 
     public ValueTask EnqueueAsync(ModerationRequest request, CancellationToken cancellationToken = default)
-        => _queue.Writer.WriteAsync(request, cancellationToken);
+    {
+        _logger.LogInformation(
+            "Queued moderation request Guild={GuildId} Channel={ChannelId} Message={MessageId} User={UserId} Preview=\"{Preview}\"",
+            request.GuildId,
+            request.ChannelId,
+            request.MessageId,
+            request.UserId,
+            HttpLoggingHelper.SafeMessagePreview(request.Content));
+
+        return _queue.Writer.WriteAsync(request, cancellationToken);
+    }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -51,19 +63,75 @@ public sealed class ModerationQueue
 
     private async Task ProcessAsync(ModerationRequest request, CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+
+        _logger.LogInformation(
+            "Processing moderation request Guild={GuildId} Channel={ChannelId} Message={MessageId}",
+            request.GuildId,
+            request.ChannelId,
+            request.MessageId);
+
         var settings = await _database.GetGuildSettingsAsync(request.GuildId, cancellationToken);
-        if (settings is null || settings.AlertChannelId is null || !settings.AiEnabled)
+        if (settings is null)
+        {
+            _logger.LogInformation("Skipping message {MessageId}: no guild settings found.", request.MessageId);
             return;
+        }
+
+        if (!settings.AiEnabled)
+        {
+            _logger.LogInformation("Skipping message {MessageId}: AI moderation disabled for guild {GuildId}.", request.MessageId, request.GuildId);
+            return;
+        }
+
+        if (settings.AlertChannelId is null)
+        {
+            _logger.LogWarning("Skipping message {MessageId}: no alert channel configured for guild {GuildId}.", request.MessageId, request.GuildId);
+            return;
+        }
 
         var rules = await _database.ListRulesAsync(request.GuildId, cancellationToken);
         if (rules.Count == 0)
+        {
+            _logger.LogInformation("Skipping message {MessageId}: no moderation rules configured for guild {GuildId}.", request.MessageId, request.GuildId);
             return;
+        }
 
         var feedbackExamples = await _database.GetFeedbackExamplesAsync(request.GuildId, 12, cancellationToken);
+
+        _logger.LogInformation(
+            "Sending message {MessageId} to AI ProviderRules={RuleCount} FeedbackExamples={FeedbackCount} Threshold={Threshold}",
+            request.MessageId,
+            rules.Count,
+            feedbackExamples.Count,
+            settings.ConfidenceThreshold);
+
         var decision = await _aiModerationService.EvaluateAsync(request, settings, rules, feedbackExamples, cancellationToken);
 
-        if (!decision.ShouldAlert || decision.Confidence < settings.ConfidenceThreshold)
+        _logger.LogInformation(
+            "AI decision for message {MessageId}: ShouldAlert={ShouldAlert} Rule={RuleName} Confidence={Confidence} Reason=\"{Reason}\" ElapsedMs={ElapsedMs}",
+            request.MessageId,
+            decision.ShouldAlert,
+            decision.RuleName,
+            decision.Confidence,
+            HttpLoggingHelper.Truncate(decision.Reason, 300),
+            stopwatch.ElapsedMilliseconds);
+
+        if (!decision.ShouldAlert)
+        {
+            _logger.LogInformation("Message {MessageId} did not trigger an alert.", request.MessageId);
             return;
+        }
+
+        if (decision.Confidence < settings.ConfidenceThreshold)
+        {
+            _logger.LogInformation(
+                "Message {MessageId} below threshold. Confidence={Confidence} Threshold={Threshold}",
+                request.MessageId,
+                decision.Confidence,
+                settings.ConfidenceThreshold);
+            return;
+        }
 
         var alertId = await _database.InsertAlertAsync(new AlertRecord
         {
@@ -80,16 +148,24 @@ public sealed class ModerationQueue
         }, cancellationToken);
 
         if (_discordClient.GetChannel((ulong)settings.AlertChannelId.Value) is not IMessageChannel alertChannel)
+        {
+            _logger.LogWarning(
+                "Alert {AlertId} for message {MessageId} was stored, but alert channel {AlertChannelId} could not be resolved.",
+                alertId,
+                request.MessageId,
+                settings.AlertChannelId.Value);
             return;
+        }
 
         var pingText = settings.PingRoleId is long roleId ? $"<@&{roleId}>" : string.Empty;
+        var messageLink = BuildDiscordMessageLink(request.GuildId, request.ChannelId, request.MessageId);
 
         var embed = new EmbedBuilder()
             .WithTitle("⚠ Possible Rule Violation")
             .WithColor(Color.Orange)
             .AddField("Alert ID", $"#{alertId}", true)
             .AddField("User", request.Username, true)
-            .AddField("Channel", request.ChannelMention, true)
+            .AddField("Message Link", messageLink, false)
             .AddField("Rule", decision.RuleName, true)
             .AddField("Confidence", $"{decision.Confidence}%", true)
             .AddField("Reason", string.IsNullOrWhiteSpace(decision.Reason) ? "No reason provided." : decision.Reason)
@@ -98,7 +174,19 @@ public sealed class ModerationQueue
             .Build();
 
         await alertChannel.SendMessageAsync(text: pingText, embed: embed);
+
+        _logger.LogInformation(
+            "Alert sent AlertId={AlertId} MessageId={MessageId} Rule={RuleName} Confidence={Confidence} AlertChannelId={AlertChannelId} MessageLink={MessageLink}",
+            alertId,
+            request.MessageId,
+            decision.RuleName,
+            decision.Confidence,
+            settings.AlertChannelId.Value,
+            messageLink);
     }
+
+    private static string BuildDiscordMessageLink(long guildId, long channelId, long messageId)
+        => $"https://discord.com/channels/{guildId}/{channelId}/{messageId}";
 
     private static string TrimForCodeBlock(string content, int maxLength)
     {
