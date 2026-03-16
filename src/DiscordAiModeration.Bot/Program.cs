@@ -34,7 +34,8 @@ builder.Services.AddSingleton(_ =>
     {
         GatewayIntents = GatewayIntents.Guilds |
                          GatewayIntents.GuildMessages |
-                         GatewayIntents.MessageContent,
+                         GatewayIntents.MessageContent |
+                         GatewayIntents.GuildMembers,
         AlwaysDownloadUsers = false,
         LogGatewayIntentWarnings = false,
         UseInteractionSnowflakeDate = false

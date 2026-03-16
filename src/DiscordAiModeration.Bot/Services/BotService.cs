@@ -122,19 +122,47 @@ public sealed class BotService
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption("status", ApplicationCommandOptionType.String, "all|pending|approved|rejected", false));
 
+        var rolesCommand = new SlashCommandBuilder()
+            .WithName("roles")
+            .WithDescription("Role audit tools")
+            .AddOption(BuildRoleAuditSubCommand());
         try
         {
-            await _discordClient.BulkOverwriteGlobalApplicationCommandsAsync(new ApplicationCommandProperties[]
+            foreach (var guild in _discordClient.Guilds)
             {
-                modConfigCommand.Build(),
-                rulesCommand.Build(),
-                reviewCommand.Build()
-            });
+                await guild.BulkOverwriteApplicationCommandAsync(new ApplicationCommandProperties[]
+                {
+            modConfigCommand.Build(),
+            rulesCommand.Build(),
+            reviewCommand.Build(),
+            rolesCommand.Build()
+                });
+
+                _logger.LogInformation(
+                    "Slash commands registered for guild {GuildName} ({GuildId})",
+                    guild.Name,
+                    guild.Id);
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to register slash commands");
         }
+        //try
+        //{
+        //    await _discordClient.BulkOverwriteGlobalApplicationCommandsAsync(new ApplicationCommandProperties[]
+        //    {
+        //        modConfigCommand.Build(),
+        //        rulesCommand.Build(),
+        //        reviewCommand.Build(),
+        //        rolesCommand.Build()
+        //    });
+        //    _logger.LogInformation("Slash commands registered.");
+        //}
+        //catch (Exception ex)
+        //{
+        //    _logger.LogError(ex, "Failed to register slash commands");
+        //}
     }
 
     private async Task OnMessageReceivedAsync(SocketMessage socketMessage)
@@ -190,6 +218,9 @@ public sealed class BotService
                     break;
                 case "review":
                     await HandleReviewAsync(command, guildId);
+                    break;
+                case "roles":
+                    await HandleRolesAsync(command, guildId);
                     break;
                 default:
                     await command.RespondAsync("Unknown command.", ephemeral: true);
@@ -346,12 +377,172 @@ public sealed class BotService
         }
     }
 
+    private async Task HandleRolesAsync(SocketSlashCommand command, long guildId)
+    {
+        var subCommand = command.Data.Options.First();
+
+        switch (subCommand.Name)
+        {
+            case "audit-exactly-one":
+                await HandleRoleAuditExactlyOneAsync(command, guildId, subCommand);
+                break;
+            default:
+                await command.RespondAsync("Unknown roles subcommand.", ephemeral: true);
+                break;
+        }
+    }
+
+    private async Task HandleRoleAuditExactlyOneAsync(SocketSlashCommand command, long guildId, SocketSlashCommandDataOption subCommand)
+    {
+        await command.DeferAsync(ephemeral: true);
+
+        var selectedRoles = subCommand.Options
+            .Where(option => option.Value is IRole)
+            .Select(option => (IRole)option.Value!)
+            .GroupBy(role => role.Id)
+            .Select(group => group.First())
+            .ToList();
+
+        if (selectedRoles.Count < 2)
+        {
+            await command.FollowupAsync("Choose at least two distinct roles.", ephemeral: true);
+            return;
+        }
+
+        var includeBots = (subCommand.Options.FirstOrDefault(x => x.Name == "include-bots")?.Value as bool?) ?? false;
+        var guild = _discordClient.GetGuild((ulong)guildId);
+        if (guild is null)
+        {
+            await command.FollowupAsync("Could not load the server.", ephemeral: true);
+            return;
+        }
+
+        var allUsers = new List<IGuildUser>();
+        await foreach (var batch in guild.GetUsersAsync())
+            allUsers.AddRange(batch);
+
+        var selectedRoleIds = selectedRoles.Select(role => role.Id).ToHashSet();
+        var violations = new List<string>();
+        var noRoleCount = 0;
+        var multipleRoleCount = 0;
+
+        foreach (var user in allUsers
+                     .Where(user => includeBots || !user.IsBot)
+                     .OrderBy(user => user.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            var matchedRoles = user.RoleIds
+                .Where(selectedRoleIds.Contains)
+                .Select(roleId => guild.GetRole(roleId)?.Name ?? roleId.ToString())
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (matchedRoles.Count == 1)
+                continue;
+
+            var label = matchedRoles.Count == 0
+                ? "No selected roles"
+                : $"Multiple selected roles ({matchedRoles.Count}): {string.Join(", ", matchedRoles)}";
+
+            if (matchedRoles.Count == 0)
+                noRoleCount++;
+            else
+                multipleRoleCount++;
+
+            violations.Add($"{user.Mention} - {user.Username}#{user.Discriminator} - {label}");
+        }
+
+        var roleSummary = string.Join(", ", selectedRoles.Select(role => role.Mention));
+        var audience = includeBots ? "members and bots" : "members";
+
+        if (violations.Count == 0)
+        {
+            await command.FollowupAsync(
+                $"Checked {allUsers.Count(user => includeBots || !user.IsBot)} {audience}. Every checked account has exactly one of these roles: {roleSummary}",
+                ephemeral: true);
+            return;
+        }
+
+        var headerLines = new List<string>
+        {
+            "Role audit: exactly one selected role required",
+            $"Selected roles: {roleSummary}",
+            $"Checked accounts: {allUsers.Count(user => includeBots || !user.IsBot)}",
+            $"Missing all selected roles: {noRoleCount}",
+            $"Having multiple selected roles: {multipleRoleCount}",
+            string.Empty
+        };
+
+        var outputLines = headerLines.Concat(violations).ToList();
+        var chunks = ChunkLines(outputLines, 1900).ToList();
+
+        for (var i = 0; i < chunks.Count; i++)
+        {
+            if (i == 0)
+                await command.FollowupAsync(chunks[i], ephemeral: true);
+            else
+                await command.FollowupAsync(chunks[i], ephemeral: true);
+        }
+    }
+
+    private static SlashCommandOptionBuilder BuildRoleAuditSubCommand()
+    {
+        var subCommand = new SlashCommandOptionBuilder()
+            .WithName("audit-exactly-one")
+            .WithDescription("List users who have none or more than one of the selected roles")
+            .WithType(ApplicationCommandOptionType.SubCommand)
+            .AddOption("role1", ApplicationCommandOptionType.Role, "First role", true)
+            .AddOption("role2", ApplicationCommandOptionType.Role, "Second role", true)
+            .AddOption("role3", ApplicationCommandOptionType.Role, "Third role", false)
+            .AddOption("role4", ApplicationCommandOptionType.Role, "Fourth role", false)
+            .AddOption("role5", ApplicationCommandOptionType.Role, "Fifth role", false)
+            .AddOption("role6", ApplicationCommandOptionType.Role, "Sixth role", false)
+            .AddOption("role7", ApplicationCommandOptionType.Role, "Seventh role", false)
+            .AddOption("role8", ApplicationCommandOptionType.Role, "Eighth role", false)
+            .AddOption("role9", ApplicationCommandOptionType.Role, "Ninth role", false)
+            .AddOption("role10", ApplicationCommandOptionType.Role, "Tenth role", false)
+            .AddOption("include-bots", ApplicationCommandOptionType.Boolean, "Include bot accounts in the audit", false);
+
+        return subCommand;
+    }
+
     private static string Trim(string value, int maxLength)
         => value.Length <= maxLength ? value : value[..maxLength] + "...";
     private static IEnumerable<string> Chunk(string text, int maxLength)
     {
         for (var i = 0; i < text.Length; i += maxLength)
             yield return text.Substring(i, Math.Min(maxLength, text.Length - i));
+    }
+
+    private static IEnumerable<string> ChunkLines(IEnumerable<string> lines, int maxLength)
+    {
+        var current = new List<string>();
+        var currentLength = 0;
+
+        foreach (var line in lines)
+        {
+            var normalizedLine = line ?? string.Empty;
+            var lineLength = normalizedLine.Length + Environment.NewLine.Length;
+
+            if (current.Count > 0 && currentLength + lineLength > maxLength)
+            {
+                yield return string.Join(Environment.NewLine, current);
+                current.Clear();
+                currentLength = 0;
+            }
+
+            if (normalizedLine.Length > maxLength)
+            {
+                foreach (var chunk in Chunk(normalizedLine, maxLength))
+                    yield return chunk;
+                continue;
+            }
+
+            current.Add(normalizedLine);
+            currentLength += lineLength;
+        }
+
+        if (current.Count > 0)
+            yield return string.Join(Environment.NewLine, current);
     }
 
 }
