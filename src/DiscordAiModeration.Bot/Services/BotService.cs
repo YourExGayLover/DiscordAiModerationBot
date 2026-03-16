@@ -1,5 +1,8 @@
+using System.Text;
+using System.Text.Json;
 using Discord;
 using Discord.WebSocket;
+using DiscordAiModeration.Bot.Models;
 using DiscordAiModeration.Core.Interfaces;
 using DiscordAiModeration.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -11,17 +14,20 @@ public sealed class BotService
     private readonly DiscordSocketClient _discordClient;
     private readonly IDatabase _database;
     private readonly ModerationQueue _moderationQueue;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<BotService> _logger;
 
     public BotService(
         DiscordSocketClient discordClient,
         IDatabase database,
         ModerationQueue moderationQueue,
+        IHttpClientFactory httpClientFactory,
         ILogger<BotService> logger)
     {
         _discordClient = discordClient;
         _database = database;
         _moderationQueue = moderationQueue;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -99,7 +105,17 @@ public sealed class BotService
                 .WithName("remove")
                 .WithDescription("Remove a rule")
                 .WithType(ApplicationCommandOptionType.SubCommand)
-                .AddOption("name", ApplicationCommandOptionType.String, "Rule name to remove", true));
+                .AddOption("name", ApplicationCommandOptionType.String, "Rule name to remove", true))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("export")
+                .WithDescription("Export all rules for this server as JSON")
+                .WithType(ApplicationCommandOptionType.SubCommand))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("import")
+                .WithDescription("Import rules for this server from a JSON attachment")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("file", ApplicationCommandOptionType.Attachment, "The exported JSON file", true)
+                .AddOption("replace-existing", ApplicationCommandOptionType.Boolean, "If true, remove existing rules before import", false));
 
         var reviewCommand = new SlashCommandBuilder()
             .WithName("review")
@@ -126,16 +142,17 @@ public sealed class BotService
             .WithName("roles")
             .WithDescription("Role audit tools")
             .AddOption(BuildRoleAuditSubCommand());
+
         try
         {
             foreach (var guild in _discordClient.Guilds)
             {
                 await guild.BulkOverwriteApplicationCommandAsync(new ApplicationCommandProperties[]
                 {
-            modConfigCommand.Build(),
-            rulesCommand.Build(),
-            reviewCommand.Build(),
-            rolesCommand.Build()
+                    modConfigCommand.Build(),
+                    rulesCommand.Build(),
+                    reviewCommand.Build(),
+                    rolesCommand.Build()
                 });
 
                 _logger.LogInformation(
@@ -148,34 +165,16 @@ public sealed class BotService
         {
             _logger.LogError(ex, "Failed to register slash commands");
         }
-        //try
-        //{
-        //    await _discordClient.BulkOverwriteGlobalApplicationCommandsAsync(new ApplicationCommandProperties[]
-        //    {
-        //        modConfigCommand.Build(),
-        //        rulesCommand.Build(),
-        //        reviewCommand.Build(),
-        //        rolesCommand.Build()
-        //    });
-        //    _logger.LogInformation("Slash commands registered.");
-        //}
-        //catch (Exception ex)
-        //{
-        //    _logger.LogError(ex, "Failed to register slash commands");
-        //}
     }
 
     private async Task OnMessageReceivedAsync(SocketMessage socketMessage)
     {
         if (socketMessage is not SocketUserMessage message)
             return;
-
         if (message.Author.IsBot)
             return;
-
         if (message.Channel is not SocketGuildChannel guildChannel)
             return;
-
         if (string.IsNullOrWhiteSpace(message.Content))
             return;
 
@@ -191,7 +190,9 @@ public sealed class BotService
             MessageId = (long)message.Id,
             UserId = (long)message.Author.Id,
             Username = message.Author.Mention,
-            ChannelMention = message.Channel is SocketTextChannel textChannel ? textChannel.Mention : $"<#{message.Channel.Id}>",
+            ChannelMention = message.Channel is SocketTextChannel textChannel
+                ? textChannel.Mention
+                : $"<#{message.Channel.Id}>",
             Content = message.Content,
             CreatedUtc = DateTime.UtcNow
         });
@@ -273,7 +274,7 @@ public sealed class BotService
                 var enabled = Convert.ToBoolean(subCommand.Options.First().Value);
                 settings.AiEnabled = enabled;
                 await _database.UpsertGuildSettingsAsync(settings);
-                await command.RespondAsync($"AI moderation {(enabled ? "enabled" : "disabled")}.", ephemeral: true);
+                await command.RespondAsync($"AI moderation {(enabled ? "enabled" : "disabled") }.", ephemeral: true);
                 break;
             }
         }
@@ -290,6 +291,7 @@ public sealed class BotService
                 var name = (string)subCommand.Options.First(x => x.Name == "name").Value!;
                 var description = (string)subCommand.Options.First(x => x.Name == "description").Value!;
                 var rawExamples = subCommand.Options.FirstOrDefault(x => x.Name == "examples")?.Value as string;
+
                 var examples = string.IsNullOrWhiteSpace(rawExamples)
                     ? Array.Empty<string>()
                     : rawExamples.Split("||", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -299,12 +301,13 @@ public sealed class BotService
                     GuildId = guildId,
                     Name = name,
                     Description = description,
-                    ExamplesJson = System.Text.Json.JsonSerializer.Serialize(examples)
+                    ExamplesJson = JsonSerializer.Serialize(examples)
                 });
 
                 await command.RespondAsync($"Saved rule **{name}**.", ephemeral: true);
                 break;
             }
+
             case "list":
             {
                 var rules = await _database.ListRulesAsync(guildId);
@@ -327,11 +330,124 @@ public sealed class BotService
 
                 break;
             }
+
             case "remove":
             {
                 var name = (string)subCommand.Options.First(x => x.Name == "name").Value!;
                 var removed = await _database.RemoveRuleAsync(guildId, name);
-                await command.RespondAsync(removed ? $"Removed **{name}**." : $"Rule **{name}** was not found.", ephemeral: true);
+                await command.RespondAsync(
+                    removed ? $"Removed **{name}**." : $"Rule **{name}** was not found.",
+                    ephemeral: true);
+                break;
+            }
+
+            case "export":
+            {
+                var rules = await _database.ListRulesAsync(guildId);
+
+                var export = new RulesExportFile
+                {
+                    GuildId = guildId,
+                    ExportedUtc = DateTime.UtcNow,
+                    Rules = rules.Select(r => new RuleImportItem
+                    {
+                        Name = r.Name,
+                        Description = r.Description,
+                        Examples = DeserializeExamples(r.ExamplesJson)
+                    }).ToList()
+                };
+
+                var json = JsonSerializer.Serialize(export, new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+
+                var bytes = Encoding.UTF8.GetBytes(json);
+                await using var stream = new MemoryStream(bytes);
+                var attachment = new FileAttachment(stream, $"rules-{guildId}-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
+
+                await command.RespondWithFileAsync(
+                    attachment,
+                    text: $"Exported {export.Rules.Count} rule(s).",
+                    ephemeral: true);
+
+                break;
+            }
+
+            case "import":
+            {
+                await command.DeferAsync(ephemeral: true);
+
+                var attachmentOption = subCommand.Options.First(x => x.Name == "file");
+                var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
+                var attachment = (IAttachment)attachmentOption.Value!;
+
+                if (!attachment.Filename.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                {
+                    await command.FollowupAsync("Import file must be a JSON file.", ephemeral: true);
+                    return;
+                }
+
+                var client = _httpClientFactory.CreateClient();
+                var json = await client.GetStringAsync(attachment.Url);
+
+                RulesExportFile? importFile;
+                try
+                {
+                    importFile = JsonSerializer.Deserialize<RulesExportFile>(json, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+                }
+                catch (JsonException)
+                {
+                    await command.FollowupAsync("That file is not valid JSON for rule import.", ephemeral: true);
+                    return;
+                }
+
+                if (importFile is null || importFile.Rules.Count == 0)
+                {
+                    await command.FollowupAsync("The import file did not contain any rules.", ephemeral: true);
+                    return;
+                }
+
+                var validRules = importFile.Rules
+                    .Where(r => !string.IsNullOrWhiteSpace(r.Name) && !string.IsNullOrWhiteSpace(r.Description))
+                    .GroupBy(r => r.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
+                    .ToList();
+
+                if (validRules.Count == 0)
+                {
+                    await command.FollowupAsync("No valid rules were found in the file.", ephemeral: true);
+                    return;
+                }
+
+                if (replaceExisting)
+                    await _database.RemoveAllRulesAsync(guildId);
+
+                foreach (var rule in validRules)
+                {
+                    await _database.UpsertRuleAsync(new RuleRecord
+                    {
+                        GuildId = guildId,
+                        Name = rule.Name.Trim(),
+                        Description = rule.Description.Trim(),
+                        ExamplesJson = JsonSerializer.Serialize(
+                            (rule.Examples ?? new List<string>())
+                            .Where(x => !string.IsNullOrWhiteSpace(x))
+                            .Select(x => x.Trim())
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToArray())
+                    });
+                }
+
+                await command.FollowupAsync(
+                    replaceExisting
+                        ? $"Imported {validRules.Count} rule(s) and replaced existing rules."
+                        : $"Imported {validRules.Count} rule(s). Existing rules with matching names were updated.",
+                    ephemeral: true);
+
                 break;
             }
         }
@@ -369,8 +485,7 @@ public sealed class BotService
                     return;
                 }
 
-                var lines = alerts.Select(a =>
-                    $"**#{a.Id}** [{a.FeedbackStatus}] Rule={a.RuleName} Confidence={a.Confidence}% User=<@{a.UserId}> Text=\"{Trim(a.MessageContent, 80)}\"");
+                var lines = alerts.Select(a => $"**#{a.Id}** [{a.FeedbackStatus}] Rule={a.RuleName} Confidence={a.Confidence}% User=<@{a.UserId}> Text=\"{Trim(a.MessageContent, 80)}\"");
                 await command.RespondAsync(string.Join("\n", lines), ephemeral: true);
                 break;
             }
@@ -417,7 +532,7 @@ public sealed class BotService
             return;
         }
 
-        var allUsers = new List<IGuildUser>();
+        var allUsers = new List<SocketGuildUser>();
         await foreach (var batch in guild.GetUsersAsync())
             allUsers.AddRange(batch);
 
@@ -505,8 +620,23 @@ public sealed class BotService
         return subCommand;
     }
 
-    private static string Trim(string value, int maxLength)
-        => value.Length <= maxLength ? value : value[..maxLength] + "...";
+    private static List<string> DeserializeExamples(string? examplesJson)
+    {
+        if (string.IsNullOrWhiteSpace(examplesJson))
+            return new List<string>();
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(examplesJson) ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private static string Trim(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength] + "...";
+
     private static IEnumerable<string> Chunk(string text, int maxLength)
     {
         for (var i = 0; i < text.Length; i += maxLength)
@@ -544,5 +674,4 @@ public sealed class BotService
         if (current.Count > 0)
             yield return string.Join(Environment.NewLine, current);
     }
-
 }

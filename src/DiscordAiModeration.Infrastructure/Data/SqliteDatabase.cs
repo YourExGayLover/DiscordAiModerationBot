@@ -24,39 +24,39 @@ public sealed class SqliteDatabase : IDatabase
         await connection.OpenAsync(cancellationToken);
 
         var sql = """
-CREATE TABLE IF NOT EXISTS GuildSettings (
-    GuildId INTEGER PRIMARY KEY,
-    AlertChannelId INTEGER NULL,
-    PingRoleId INTEGER NULL,
-    ConfidenceThreshold INTEGER NOT NULL DEFAULT 70,
-    AiEnabled INTEGER NOT NULL DEFAULT 1
-);
+                  CREATE TABLE IF NOT EXISTS GuildSettings (
+                      GuildId INTEGER PRIMARY KEY,
+                      AlertChannelId INTEGER NULL,
+                      PingRoleId INTEGER NULL,
+                      ConfidenceThreshold INTEGER NOT NULL DEFAULT 70,
+                      AiEnabled INTEGER NOT NULL DEFAULT 1
+                  );
 
-CREATE TABLE IF NOT EXISTS Rules (
-    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-    GuildId INTEGER NOT NULL,
-    Name TEXT NOT NULL,
-    Description TEXT NOT NULL,
-    ExamplesJson TEXT NULL,
-    UNIQUE(GuildId, Name)
-);
+                  CREATE TABLE IF NOT EXISTS Rules (
+                      Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      GuildId INTEGER NOT NULL,
+                      Name TEXT NOT NULL,
+                      Description TEXT NOT NULL,
+                      ExamplesJson TEXT NULL,
+                      UNIQUE(GuildId, Name)
+                  );
 
-CREATE TABLE IF NOT EXISTS Alerts (
-    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-    GuildId INTEGER NOT NULL,
-    MessageId INTEGER NOT NULL,
-    ChannelId INTEGER NOT NULL,
-    UserId INTEGER NOT NULL,
-    RuleName TEXT NOT NULL,
-    Confidence INTEGER NOT NULL,
-    Reason TEXT NULL,
-    MessageContent TEXT NOT NULL,
-    FeedbackStatus TEXT NOT NULL DEFAULT 'pending',
-    FeedbackNotes TEXT NULL,
-    ReviewedByUserId INTEGER NULL,
-    CreatedUtc TEXT NOT NULL
-);
-""";
+                  CREATE TABLE IF NOT EXISTS Alerts (
+                      Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      GuildId INTEGER NOT NULL,
+                      MessageId INTEGER NOT NULL,
+                      ChannelId INTEGER NOT NULL,
+                      UserId INTEGER NOT NULL,
+                      RuleName TEXT NOT NULL,
+                      Confidence INTEGER NOT NULL,
+                      Reason TEXT NULL,
+                      MessageContent TEXT NOT NULL,
+                      FeedbackStatus TEXT NOT NULL DEFAULT 'pending',
+                      FeedbackNotes TEXT NULL,
+                      ReviewedByUserId INTEGER NULL,
+                      CreatedUtc TEXT NOT NULL
+                  );
+                  """;
 
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS Alerts (
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT GuildId, AlertChannelId, PingRoleId, ConfidenceThreshold, AiEnabled FROM GuildSettings WHERE GuildId=$guildId";
         command.Parameters.AddWithValue("$guildId", guildId);
@@ -89,21 +90,24 @@ CREATE TABLE IF NOT EXISTS Alerts (
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = connection.CreateCommand();
         command.CommandText = """
-INSERT INTO GuildSettings (GuildId, AlertChannelId, PingRoleId, ConfidenceThreshold, AiEnabled)
-VALUES ($guildId, $alertChannelId, $pingRoleId, $threshold, $enabled)
-ON CONFLICT(GuildId) DO UPDATE SET
-    AlertChannelId = excluded.AlertChannelId,
-    PingRoleId = excluded.PingRoleId,
-    ConfidenceThreshold = excluded.ConfidenceThreshold,
-    AiEnabled = excluded.AiEnabled;
-""";
+                              INSERT INTO GuildSettings (GuildId, AlertChannelId, PingRoleId, ConfidenceThreshold, AiEnabled)
+                              VALUES ($guildId, $alertChannelId, $pingRoleId, $threshold, $enabled)
+                              ON CONFLICT(GuildId) DO UPDATE SET
+                                  AlertChannelId = excluded.AlertChannelId,
+                                  PingRoleId = excluded.PingRoleId,
+                                  ConfidenceThreshold = excluded.ConfidenceThreshold,
+                                  AiEnabled = excluded.AiEnabled;
+                              """;
+
         command.Parameters.AddWithValue("$guildId", settings.GuildId);
         command.Parameters.AddWithValue("$alertChannelId", (object?)settings.AlertChannelId ?? DBNull.Value);
         command.Parameters.AddWithValue("$pingRoleId", (object?)settings.PingRoleId ?? DBNull.Value);
         command.Parameters.AddWithValue("$threshold", settings.ConfidenceThreshold);
         command.Parameters.AddWithValue("$enabled", settings.AiEnabled ? 1 : 0);
+
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -111,26 +115,31 @@ ON CONFLICT(GuildId) DO UPDATE SET
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = connection.CreateCommand();
         command.CommandText = """
-INSERT INTO Rules (GuildId, Name, Description, ExamplesJson)
-VALUES ($guildId, $name, $description, $examplesJson)
-ON CONFLICT(GuildId, Name) DO UPDATE SET
-    Description = excluded.Description,
-    ExamplesJson = excluded.ExamplesJson;
-""";
+                              INSERT INTO Rules (GuildId, Name, Description, ExamplesJson)
+                              VALUES ($guildId, $name, $description, $examplesJson)
+                              ON CONFLICT(GuildId, Name) DO UPDATE SET
+                                  Description = excluded.Description,
+                                  ExamplesJson = excluded.ExamplesJson;
+                              """;
+
         command.Parameters.AddWithValue("$guildId", rule.GuildId);
         command.Parameters.AddWithValue("$name", rule.Name);
         command.Parameters.AddWithValue("$description", rule.Description);
         command.Parameters.AddWithValue("$examplesJson", (object?)rule.ExamplesJson ?? DBNull.Value);
+
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<List<RuleRecord>> ListRulesAsync(long guildId, CancellationToken cancellationToken = default)
     {
         var rules = new List<RuleRecord>();
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT Id, GuildId, Name, Description, ExamplesJson FROM Rules WHERE GuildId=$guildId ORDER BY Name";
         command.Parameters.AddWithValue("$guildId", guildId);
@@ -155,23 +164,39 @@ ON CONFLICT(GuildId, Name) DO UPDATE SET
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM Rules WHERE GuildId=$guildId AND Name=$name";
         command.Parameters.AddWithValue("$guildId", guildId);
         command.Parameters.AddWithValue("$name", name);
+
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    public async Task<int> RemoveAllRulesAsync(long guildId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM Rules WHERE GuildId=$guildId";
+        command.Parameters.AddWithValue("$guildId", guildId);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<long> InsertAlertAsync(AlertRecord alert, CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = connection.CreateCommand();
         command.CommandText = """
-INSERT INTO Alerts (GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, CreatedUtc)
-VALUES ($guildId, $messageId, $channelId, $userId, $ruleName, $confidence, $reason, $messageContent, $feedbackStatus, $createdUtc);
-SELECT last_insert_rowid();
-""";
+                              INSERT INTO Alerts (GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, CreatedUtc)
+                              VALUES ($guildId, $messageId, $channelId, $userId, $ruleName, $confidence, $reason, $messageContent, $feedbackStatus, $createdUtc);
+                              SELECT last_insert_rowid();
+                              """;
+
         command.Parameters.AddWithValue("$guildId", alert.GuildId);
         command.Parameters.AddWithValue("$messageId", alert.MessageId);
         command.Parameters.AddWithValue("$channelId", alert.ChannelId);
@@ -182,6 +207,7 @@ SELECT last_insert_rowid();
         command.Parameters.AddWithValue("$messageContent", alert.MessageContent);
         command.Parameters.AddWithValue("$feedbackStatus", alert.FeedbackStatus);
         command.Parameters.AddWithValue("$createdUtc", alert.CreatedUtc.ToString("O"));
+
         var result = await command.ExecuteScalarAsync(cancellationToken);
         return Convert.ToInt64(result);
     }
@@ -190,31 +216,37 @@ SELECT last_insert_rowid();
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = connection.CreateCommand();
         command.CommandText = """
-UPDATE Alerts
-SET FeedbackStatus=$status,
-    FeedbackNotes=$notes,
-    ReviewedByUserId=$reviewedByUserId
-WHERE Id=$alertId AND GuildId=$guildId;
-""";
+                              UPDATE Alerts
+                              SET FeedbackStatus=$status,
+                                  FeedbackNotes=$notes,
+                                  ReviewedByUserId=$reviewedByUserId
+                              WHERE Id=$alertId AND GuildId=$guildId;
+                              """;
+
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$notes", (object?)notes ?? DBNull.Value);
         command.Parameters.AddWithValue("$reviewedByUserId", (long)reviewerUserId);
         command.Parameters.AddWithValue("$alertId", alertId);
         command.Parameters.AddWithValue("$guildId", guildId);
+
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     public async Task<List<AlertRecord>> ListAlertsAsync(long guildId, string status, int limit, CancellationToken cancellationToken = default)
     {
         var alerts = new List<AlertRecord>();
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = connection.CreateCommand();
         command.CommandText = status.Equals("all", StringComparison.OrdinalIgnoreCase)
             ? "SELECT Id, GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, FeedbackNotes, ReviewedByUserId, CreatedUtc FROM Alerts WHERE GuildId=$guildId ORDER BY Id DESC LIMIT $limit"
             : "SELECT Id, GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, FeedbackNotes, ReviewedByUserId, CreatedUtc FROM Alerts WHERE GuildId=$guildId AND FeedbackStatus=$status ORDER BY Id DESC LIMIT $limit";
+
         command.Parameters.AddWithValue("$guildId", guildId);
         command.Parameters.AddWithValue("$limit", limit);
         if (!status.Equals("all", StringComparison.OrdinalIgnoreCase))
@@ -247,17 +279,19 @@ WHERE Id=$alertId AND GuildId=$guildId;
     public async Task<List<FeedbackExample>> GetFeedbackExamplesAsync(long guildId, int limit, CancellationToken cancellationToken = default)
     {
         var examples = new List<FeedbackExample>();
+
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
         await using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT RuleName, MessageContent, FeedbackStatus, FeedbackNotes
-FROM Alerts
-WHERE GuildId=$guildId
-  AND FeedbackStatus IN ('approved', 'rejected')
-ORDER BY Id DESC
-LIMIT $limit;
-""";
+                              SELECT RuleName, MessageContent, FeedbackStatus, FeedbackNotes
+                              FROM Alerts
+                              WHERE GuildId=$guildId AND FeedbackStatus IN ('approved', 'rejected')
+                              ORDER BY Id DESC
+                              LIMIT $limit;
+                              """;
+
         command.Parameters.AddWithValue("$guildId", guildId);
         command.Parameters.AddWithValue("$limit", limit);
 
