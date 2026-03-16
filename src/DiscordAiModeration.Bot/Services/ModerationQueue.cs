@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using Discord;
 using Discord.WebSocket;
+using DiscordAiModeration.Bot.Helpers;
 using DiscordAiModeration.Core.Interfaces;
 using DiscordAiModeration.Core.Models;
 using DiscordAiModeration.Infrastructure.Services;

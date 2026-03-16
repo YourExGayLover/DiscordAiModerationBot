@@ -4,7 +4,7 @@
     "DiscordAiModeration.Bot": {
       "commandName": "Project",
       "environmentVariables": {
-        "AI_PROVIDER": "openai",
+        "AI_PROVIDER": "ollama",
         "OLLAMA_BASE_URL": "http://localhost:11434",
         "OLLAMA_MODEL": "llama3.1:8b",
         "SQLITE_PATH": "botdata.db",
