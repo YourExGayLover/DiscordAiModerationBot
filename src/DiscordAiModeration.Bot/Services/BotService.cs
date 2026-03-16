@@ -532,7 +532,7 @@ public sealed class BotService
             return;
         }
 
-        var allUsers = new List<SocketGuildUser>();
+        var allUsers = new List<IGuildUser>();
         await foreach (var batch in guild.GetUsersAsync())
             allUsers.AddRange(batch);
 
