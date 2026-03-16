@@ -12,7 +12,19 @@ using Microsoft.Extensions.Logging;
 var builder = Host.CreateApplicationBuilder(args);
 
 builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
+builder.Logging.AddSimpleConsole(options =>
+{
+    options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
+    options.SingleLine = true;
+});
+
+var logLevelValue = Environment.GetEnvironmentVariable("BOT_LOG_LEVEL");
+if (!Enum.TryParse<LogLevel>(logLevelValue, ignoreCase: true, out var minimumLogLevel))
+{
+    minimumLogLevel = LogLevel.Debug;
+}
+
+builder.Logging.SetMinimumLevel(minimumLogLevel);
 
 builder.Services.Configure<AiProviderOptions>(options =>
 {
@@ -46,6 +58,7 @@ builder.Services.AddSingleton(_ =>
 
 builder.Services.AddHttpClient<OpenAiModerationService>();
 builder.Services.AddHttpClient<OllamaModerationService>();
+
 builder.Services.AddTransient<IAiModerationService, AiModerationService>();
 builder.Services.AddSingleton<IDatabase, SqliteDatabase>();
 builder.Services.AddSingleton<ModerationQueue>();
@@ -53,4 +66,13 @@ builder.Services.AddSingleton<BotService>();
 builder.Services.AddHostedService<DiscordWorker>();
 
 var host = builder.Build();
+
+var startupLogger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+startupLogger.LogInformation(
+    "Discord AI Moderation Bot starting. Provider={Provider} OpenAiModel={OpenAiModel} OllamaModel={OllamaModel} LogLevel={LogLevel}",
+    Environment.GetEnvironmentVariable("AI_PROVIDER") ?? "openai",
+    Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-5-mini",
+    Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "llama3.2",
+    minimumLogLevel);
+
 await host.RunAsync();

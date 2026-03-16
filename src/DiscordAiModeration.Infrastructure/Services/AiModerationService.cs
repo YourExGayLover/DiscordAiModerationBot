@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using DiscordAiModeration.Core.Interfaces;
 using DiscordAiModeration.Core.Models;
 using DiscordAiModeration.Infrastructure.Options;
@@ -33,14 +34,46 @@ public sealed class AiModerationService : IAiModerationService
         CancellationToken cancellationToken = default)
     {
         var provider = (_options.Provider ?? "openai").Trim().ToLowerInvariant();
+        var traceId = BuildTraceId(request);
+        var stopwatch = Stopwatch.StartNew();
 
-        _logger.LogDebug("Evaluating moderation request with provider {Provider}", provider);
+        _logger.LogInformation(
+            "AI moderation starting. TraceId={TraceId} Provider={Provider} GuildId={GuildId} ChannelId={ChannelId} MessageId={MessageId} UserId={UserId} Rules={RuleCount} Examples={ExampleCount} Threshold={Threshold}",
+            traceId,
+            provider,
+            request.GuildId,
+            request.ChannelId,
+            request.MessageId,
+            request.UserId,
+            rules.Count,
+            examples.Count,
+            settings.ConfidenceThreshold);
 
-        return provider switch
+        AiDecision decision = provider switch
         {
             "openai" => await _openAiService.EvaluateAsync(request, rules, examples, cancellationToken),
             "ollama" or "llama" => await _ollamaService.EvaluateAsync(request, rules, examples, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported AI provider: {_options.Provider}. Use 'openai' or 'ollama'.")
         };
+
+        stopwatch.Stop();
+
+        _logger.LogInformation(
+            "AI moderation finished. TraceId={TraceId} Provider={Provider} MessageId={MessageId} ShouldAlert={ShouldAlert} RuleName={RuleName} Confidence={Confidence} DurationMs={DurationMs} Reason={Reason}",
+            traceId,
+            provider,
+            request.MessageId,
+            decision.ShouldAlert,
+            decision.RuleName,
+            decision.Confidence,
+            stopwatch.ElapsedMilliseconds,
+            decision.Reason);
+
+        return decision;
+    }
+
+    private static string BuildTraceId(ModerationRequest request)
+    {
+        return $"g{request.GuildId}-m{request.MessageId}";
     }
 }

@@ -1,15 +1,30 @@
-This zip contains the files needed to add Discord server rule import/export support.
+This update adds verbose console tracing for AI moderation requests.
 
-Copy these files into the matching folders in your project:
-- src/DiscordAiModeration.Bot/Services/BotService.cs
-- src/DiscordAiModeration.Bot/Models/RuleImportExportModels.cs
-- src/DiscordAiModeration.Core/Interfaces/IDatabase.cs
-- src/DiscordAiModeration.Infrastructure/Data/SqliteDatabase.cs
+Files included:
+- src/DiscordAiModeration.Bot/Program.cs
+- src/DiscordAiModeration.Infrastructure/Services/AiModerationService.cs
+- src/DiscordAiModeration.Infrastructure/Services/OpenAiModerationService.cs
+- src/DiscordAiModeration.Infrastructure/Services/OllamaModerationService.cs
 
-What this adds:
-- /rules export
-- /rules import file:<json> [replace-existing:true|false]
+What you will see in the console:
+- startup configuration including provider/model/log level
+- when AI moderation starts for a message
+- when a request is sent to OpenAI or Ollama
+- HTTP status and timing when a response comes back
+- the parsed moderation decision
+- raw payload/response bodies when BOT_LOG_LEVEL=Debug or Trace
 
-Notes:
-- Your Program.cs already registers AddHttpClient() in the current repo, so no required Program.cs change is included.
-- If your editor shows a formatting difference, that is expected.
+Optional environment variable:
+- BOT_LOG_LEVEL=Debug
+  Allowed examples: Trace, Debug, Information, Warning, Error
+  If omitted, this update defaults to Debug.
+
+How to use:
+1. Extract this zip.
+2. Copy the included src folder over your project src folder.
+3. Rebuild the solution.
+4. Run the bot and watch the console.
+
+Tip:
+- If you only want request/response flow without full payloads, set BOT_LOG_LEVEL=Information.
+- If you want to inspect payloads and raw AI output, use BOT_LOG_LEVEL=Debug.

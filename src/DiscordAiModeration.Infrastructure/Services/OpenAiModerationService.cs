@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -14,7 +15,10 @@ public sealed class OpenAiModerationService
     private readonly AiProviderOptions _options;
     private readonly ILogger<OpenAiModerationService> _logger;
 
-    public OpenAiModerationService(HttpClient httpClient, IOptions<AiProviderOptions> options, ILogger<OpenAiModerationService> logger)
+    public OpenAiModerationService(
+        HttpClient httpClient,
+        IOptions<AiProviderOptions> options,
+        ILogger<OpenAiModerationService> logger)
     {
         _httpClient = httpClient;
         _options = options.Value;
@@ -28,7 +32,12 @@ public sealed class OpenAiModerationService
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(_options.OpenAiApiKey))
+        {
             throw new InvalidOperationException("AI_PROVIDER is set to openai, but OPENAI_API_KEY is missing.");
+        }
+
+        var traceId = BuildTraceId(request);
+        var userPrompt = SharedPromptBuilder.BuildUserPrompt(request, rules, examples);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses");
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.OpenAiApiKey);
@@ -51,7 +60,7 @@ public sealed class OpenAiModerationService
                     role = "user",
                     content = new object[]
                     {
-                        new { type = "input_text", text = SharedPromptBuilder.BuildUserPrompt(request, rules, examples) }
+                        new { type = "input_text", text = userPrompt }
                     }
                 }
             },
@@ -78,14 +87,44 @@ public sealed class OpenAiModerationService
             }
         };
 
-        httpRequest.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        var payloadJson = JsonSerializer.Serialize(payload);
+        httpRequest.Content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
 
+        _logger.LogInformation(
+            "OpenAI request sending. TraceId={TraceId} Endpoint={Endpoint} Model={Model} MessageId={MessageId} PromptLength={PromptLength} RuleCount={RuleCount} ExampleCount={ExampleCount}",
+            traceId,
+            httpRequest.RequestUri,
+            _options.OpenAiModel,
+            request.MessageId,
+            userPrompt.Length,
+            rules.Count,
+            examples.Count);
+
+        _logger.LogDebug("OpenAI request payload. TraceId={TraceId} Payload={Payload}", traceId, payloadJson);
+
+        var stopwatch = Stopwatch.StartNew();
         using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+        stopwatch.Stop();
+
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "OpenAI response received. TraceId={TraceId} StatusCode={StatusCode} DurationMs={DurationMs} BodyLength={BodyLength}",
+            traceId,
+            (int)response.StatusCode,
+            stopwatch.ElapsedMilliseconds,
+            body.Length);
+
+        _logger.LogDebug("OpenAI raw response body. TraceId={TraceId} Body={Body}", traceId, body);
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("OpenAI moderation request failed. Status={StatusCode} Body={Body}", response.StatusCode, body);
+            _logger.LogWarning(
+                "OpenAI moderation request failed. TraceId={TraceId} StatusCode={StatusCode} Body={Body}",
+                traceId,
+                response.StatusCode,
+                body);
+
             return new AiDecision(false, string.Empty, 0, "AI request failed.");
         }
 
@@ -93,12 +132,18 @@ public sealed class OpenAiModerationService
         {
             using var doc = JsonDocument.Parse(body);
             var outputText = AiDecisionParser.ExtractOpenAiOutputText(doc.RootElement);
+            _logger.LogDebug("OpenAI extracted output text. TraceId={TraceId} OutputText={OutputText}", traceId, outputText);
             return AiDecisionParser.ParseFromJson(outputText);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to parse OpenAI response. Raw response: {Body}", body);
+            _logger.LogError(ex, "Failed to parse OpenAI response. TraceId={TraceId} Raw response: {Body}", traceId, body);
             return new AiDecision(false, string.Empty, 0, "AI parsing failed.");
         }
+    }
+
+    private static string BuildTraceId(ModerationRequest request)
+    {
+        return $"g{request.GuildId}-m{request.MessageId}";
     }
 }
