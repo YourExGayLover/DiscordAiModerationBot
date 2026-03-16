@@ -14,10 +14,13 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
-builder.Services.Configure<OpenAiOptions>(options =>
+builder.Services.Configure<AiProviderOptions>(options =>
 {
-    options.ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? string.Empty;
-    options.Model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-5-mini";
+    options.Provider = Environment.GetEnvironmentVariable("AI_PROVIDER") ?? "openai";
+    options.OpenAiApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? string.Empty;
+    options.OpenAiModel = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-5-mini";
+    options.OllamaBaseUrl = Environment.GetEnvironmentVariable("OLLAMA_BASE_URL") ?? "http://localhost:11434";
+    options.OllamaModel = Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "llama3.2";
 });
 
 builder.Services.Configure<StorageOptions>(options =>
@@ -40,7 +43,9 @@ builder.Services.AddSingleton(_ =>
     return new DiscordSocketClient(config);
 });
 
-builder.Services.AddHttpClient<IAiModerationService, AiModerationService>();
+builder.Services.AddHttpClient<OpenAiModerationService>();
+builder.Services.AddHttpClient<OllamaModerationService>();
+builder.Services.AddTransient<IAiModerationService, AiModerationService>();
 builder.Services.AddSingleton<IDatabase, SqliteDatabase>();
 builder.Services.AddSingleton<ModerationQueue>();
 builder.Services.AddSingleton<BotService>();

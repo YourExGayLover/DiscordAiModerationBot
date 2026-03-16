@@ -275,41 +275,27 @@ public sealed class BotService
                 break;
             }
             case "list":
+            {
+                var rules = await _database.ListRulesAsync(guildId);
+                if (rules.Count == 0)
                 {
-                    var rules = await _database.ListRulesAsync(guildId);
-                    if (rules.Count == 0)
-                    {
-                        await command.RespondAsync("No rules configured yet.", ephemeral: true);
-                        return;
-                    }
-
-                    var text = string.Join("\n\n", rules.Select(r => $"**{r.Name}**\n{r.Description}"));
-
-                    var chunks = Chunk(text, 1900).ToList();
-
-                    for (int i = 0; i < chunks.Count; i++)
-                    {
-                        if (i == 0)
-                            await command.RespondAsync(chunks[i], ephemeral: true);
-                        else
-                            await command.FollowupAsync(chunks[i], ephemeral: true);
-                    }
-
-                    break;
+                    await command.RespondAsync("No rules configured yet.", ephemeral: true);
+                    return;
                 }
-            //case "list":
-            //    {
-            //        var rules = await _database.ListRulesAsync(guildId);
-            //        if (rules.Count == 0)
-            //        {
-            //            await command.RespondAsync("No rules configured yet.", ephemeral: true);
-            //            return;
-            //        }
 
-            //        var text = string.Join("\n\n", rules.Select(r => $"**{r.Name}**\n{r.Description}"));
-            //        await command.RespondAsync(text, ephemeral: true);
-            //        break;
-            //    }
+                var content = string.Join("\n\n", rules.Select(r => $"**{r.Name}**\n{r.Description}"));
+                var chunks = Chunk(content, 1900).ToList();
+
+                for (var i = 0; i < chunks.Count; i++)
+                {
+                    if (i == 0)
+                        await command.RespondAsync(chunks[i], ephemeral: true);
+                    else
+                        await command.FollowupAsync(chunks[i], ephemeral: true);
+                }
+
+                break;
+            }
             case "remove":
             {
                 var name = (string)subCommand.Options.First(x => x.Name == "name").Value!;
@@ -360,14 +346,12 @@ public sealed class BotService
         }
     }
 
-    private static IEnumerable<string> Chunk(string text, int maxLength)
-    {
-        for (int i = 0; i < text.Length; i += maxLength)
-        {
-            yield return text.Substring(i, Math.Min(maxLength, text.Length - i));
-        }
-    }
-
     private static string Trim(string value, int maxLength)
         => value.Length <= maxLength ? value : value[..maxLength] + "...";
+    private static IEnumerable<string> Chunk(string text, int maxLength)
+    {
+        for (var i = 0; i < text.Length; i += maxLength)
+            yield return text.Substring(i, Math.Min(maxLength, text.Length - i));
+    }
+
 }

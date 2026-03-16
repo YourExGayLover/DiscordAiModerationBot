@@ -8,12 +8,13 @@ A Visual Studio solution for a Discord moderation bot in C# that:
 - posts alerts to a configurable channel
 - supports slash commands for configuration
 - stores moderator feedback and reuses it in future classifications
+- can switch between OpenAI and a local Llama model through Ollama
 
 ## Solution layout
 
 - `src/DiscordAiModeration.Bot` - Discord host, slash commands, worker, startup
 - `src/DiscordAiModeration.Core` - domain models and interfaces
-- `src/DiscordAiModeration.Infrastructure` - SQLite persistence and OpenAI integration
+- `src/DiscordAiModeration.Infrastructure` - SQLite persistence and AI provider integrations
 - `tests/DiscordAiModeration.Tests` - starter test project
 
 ## Requirements
@@ -21,16 +22,34 @@ A Visual Studio solution for a Discord moderation bot in C# that:
 - .NET 8 SDK
 - A Discord bot application and token
 - Message Content Intent enabled in the Discord Developer Portal
-- An OpenAI API key
+- Either an OpenAI API key or Ollama installed locally
 
 ## Environment variables
 
 Set these before running:
 
 - `DISCORD_BOT_TOKEN`
-- `OPENAI_API_KEY`
+- `AI_PROVIDER` required, use `openai` or `ollama`
+- `OPENAI_API_KEY` required only when `AI_PROVIDER=openai`
 - `OPENAI_MODEL` optional, defaults to `gpt-5-mini`
+- `OLLAMA_BASE_URL` optional, defaults to `http://localhost:11434`
+- `OLLAMA_MODEL` optional, defaults to `llama3.2`
 - `SQLITE_PATH` optional, defaults to `botdata.db`
+
+## Switching providers
+
+To use OpenAI:
+
+- `AI_PROVIDER=openai`
+- set `OPENAI_API_KEY`
+- optionally change `OPENAI_MODEL`
+
+To use local Llama through Ollama:
+
+- install Ollama
+- pull a model such as `ollama pull llama3.2`
+- set `AI_PROVIDER=ollama`
+- optionally change `OLLAMA_BASE_URL` and `OLLAMA_MODEL`
 
 ## Suggested setup
 
