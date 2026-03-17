@@ -180,12 +180,12 @@ public sealed class ModerationQueue
         var messageLink = BuildDiscordMessageLink(request.GuildId, request.ChannelId, request.MessageId);
 
         var embed = new EmbedBuilder()
-            .WithTitle("⚠ Possible Rule Violation")
+            .WithTitle("🔎 Moderator Review Needed")
             .WithColor(Color.Orange)
             .AddField("Alert ID", $"#{alertId}", true)
             .AddField("User", request.Username, true)
             .AddField("Message Link", messageLink, false)
-            .AddField("Rule", decision.RuleName, true)
+            .AddField("Matched Rule", decision.RuleName, true)
             .AddField("Confidence", $"{decision.Confidence}%", true)
             .AddField("Reason", string.IsNullOrWhiteSpace(finalReason) ? "No reason provided." : finalReason)
             .AddField("Message", $"```{TrimForCodeBlock(request.Content, 900)}```")
@@ -213,9 +213,14 @@ public sealed class ModerationQueue
         return content.Length <= maxLength ? content : content[..maxLength] + "...";
     }
 
-    private static string BuildReasonWithCatechismSupport<T>(string? reason, string? ruleName, IReadOnlyList<T> rules)
+    private static string BuildReasonWithCatechismSupport(
+        string? reason,
+        string? ruleName,
+        IReadOnlyList<RuleRecord> rules)
     {
-        var cleanedReason = string.IsNullOrWhiteSpace(reason) ? "Likely violation of Catholic moderation rules." : reason.Trim();
+        var cleanedReason = string.IsNullOrWhiteSpace(reason)
+            ? "Likely violation of Catholic moderation rules."
+            : reason.Trim();
 
         if (string.IsNullOrWhiteSpace(ruleName))
         {
@@ -228,6 +233,7 @@ public sealed class ModerationQueue
         }
 
         var support = TryExtractCatechismSupportFromRules(ruleName, rules);
+
         if (string.IsNullOrWhiteSpace(support))
         {
             support = TryGetBuiltInCatechismSupport(ruleName);
@@ -241,21 +247,18 @@ public sealed class ModerationQueue
         return $"{cleanedReason}\n\n{support}";
     }
 
-    private static bool ContainsCatechismSupport(string reason)
-        => reason.Contains("CCC", StringComparison.OrdinalIgnoreCase)
-            || reason.Contains("Catechism", StringComparison.OrdinalIgnoreCase);
-
-    private static string? TryExtractCatechismSupportFromRules<T>(string ruleName, IReadOnlyList<T> rules)
+    private static string? TryExtractCatechismSupportFromRules(
+        string ruleName,
+        IReadOnlyList<RuleRecord> rules)
     {
         foreach (var rule in rules)
         {
-            var candidateName = GetPropertyValue(rule, "Name");
-            if (!string.Equals(candidateName, ruleName, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(rule.Name, ruleName, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            var description = GetPropertyValue(rule, "Description");
+            var description = rule.Description;
             if (string.IsNullOrWhiteSpace(description))
             {
                 return null;
@@ -284,17 +287,10 @@ public sealed class ModerationQueue
 
         return null;
     }
+    private static bool ContainsCatechismSupport(string reason)
+        => reason.Contains("CCC", StringComparison.OrdinalIgnoreCase)
+           || reason.Contains("Catechism", StringComparison.OrdinalIgnoreCase);
 
-    private static string? GetPropertyValue<T>(T source, string propertyName)
-    {
-        var property = source?.GetType().GetProperty(propertyName);
-        if (property?.GetValue(source) is string value && !string.IsNullOrWhiteSpace(value))
-        {
-            return value;
-        }
-
-        return null;
-    }
 
     private static string? ExtractMetadataValue(string text, string label)
     {
