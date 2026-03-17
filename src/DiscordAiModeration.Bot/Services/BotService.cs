@@ -32,6 +32,7 @@ public sealed class BotService
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
+
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await _database.InitializeAsync(cancellationToken);
@@ -45,6 +46,7 @@ public sealed class BotService
         _discordClient.Ready += OnReadyAsync;
         _discordClient.MessageReceived += OnMessageReceivedAsync;
         _discordClient.SlashCommandExecuted += OnSlashCommandExecutedAsync;
+        _discordClient.InteractionCreated += OnInteractionCreatedAsync;
 
         var token = Environment.GetEnvironmentVariable("DISCORD_BOT_TOKEN");
         if (string.IsNullOrWhiteSpace(token))
@@ -281,6 +283,153 @@ public sealed class BotService
         return normalized.Length <= 400 ? normalized : normalized[..400] + "...";
     }
 
+    private async Task OnInteractionCreatedAsync(SocketInteraction interaction)
+    {
+        try
+        {
+            if (interaction is SocketSlashCommand slashCommand)
+            {
+                await OnSlashCommandExecutedAsync(slashCommand);
+                return;
+            }
+
+            if (interaction is SocketMessageComponent component)
+            {
+                await HandleMessageComponentAsync(component);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Interaction processing error");
+
+            try
+            {
+                switch (interaction)
+                {
+                    case SocketMessageComponent component when !component.HasResponded:
+                        await component.RespondAsync("Something went wrong handling that action.", ephemeral: true);
+                        break;
+                    case SocketSlashCommand slashCommand when !slashCommand.HasResponded:
+                        await slashCommand.RespondAsync("Something went wrong handling that command.", ephemeral: true);
+                        break;
+                }
+            }
+            catch (Exception responseEx)
+            {
+                _logger.LogError(responseEx, "Failed to send interaction error response");
+            }
+        }
+    }
+
+    private async Task HandleMessageComponentAsync(SocketMessageComponent component)
+    {
+        var customId = component.Data.CustomId ?? string.Empty;
+        _logger.LogInformation(
+            "Component interaction received. CustomId={CustomId} UserId={UserId} GuildId={GuildId}",
+            customId,
+            component.User.Id,
+            component.GuildId);
+
+        if (!TryParseReviewAction(customId, component.GuildId, out var action, out var guildId, out var alertId))
+        {
+            await component.RespondAsync("Unknown review action.", ephemeral: true);
+            return;
+        }
+
+        await component.DeferAsync(ephemeral: true);
+
+        var status = action.Equals("approve", StringComparison.OrdinalIgnoreCase)
+            ? "approved"
+            : "rejected";
+
+        var updated = await _database.SetAlertFeedbackAsync(
+            alertId,
+            guildId,
+            status,
+            null,
+            component.User.Id);
+
+        if (!updated)
+        {
+            await component.FollowupAsync($"Alert #{alertId} was not found.", ephemeral: true);
+            return;
+        }
+
+        await component.FollowupAsync(
+            action.Equals("approve", StringComparison.OrdinalIgnoreCase)
+                ? $"Alert #{alertId} marked approved."
+                : $"Alert #{alertId} dismissed.",
+            ephemeral: true);
+
+        try
+        {
+            await component.Message.ModifyAsync(properties =>
+            {
+                properties.Components = new ComponentBuilder().Build();
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to clear review buttons for alert {AlertId} on message {MessageId}",
+                alertId,
+                component.Message.Id);
+        }
+    }
+
+    private static bool TryParseReviewAction(
+        string customId,
+        ulong? interactionGuildId,
+        out string action,
+        out long guildId,
+        out long alertId)
+    {
+        action = string.Empty;
+        guildId = 0;
+        alertId = 0;
+
+        if (string.IsNullOrWhiteSpace(customId))
+        {
+            return false;
+        }
+
+        var parts = customId.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (parts.Length < 3 || !parts[0].Equals("review", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        action = parts[1];
+
+        if (!action.Equals("approve", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("dismiss", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("reject", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (parts.Length == 3)
+        {
+            if (interactionGuildId is null || !long.TryParse(parts[2], out alertId))
+            {
+                return false;
+            }
+
+            guildId = (long)interactionGuildId.Value;
+            return true;
+        }
+
+        if (parts.Length >= 4)
+        {
+            return long.TryParse(parts[2], out guildId) &&
+                   long.TryParse(parts[3], out alertId);
+        }
+
+        return false;
+    }
+
     private async Task OnSlashCommandExecutedAsync(SocketSlashCommand command)
     {
         try
@@ -333,49 +482,49 @@ public sealed class BotService
         switch (subCommand.Name)
         {
             case "set-alert-channel":
-            {
-                var channel = (IChannel)subCommand.Options.First().Value!;
-                settings.AlertChannelId = (long)channel.Id;
-                await _database.UpsertGuildSettingsAsync(settings);
-                await command.RespondAsync($"Alert channel set to <#{channel.Id}>.", ephemeral: true);
-                break;
-            }
+                {
+                    var channel = (IChannel)subCommand.Options.First().Value!;
+                    settings.AlertChannelId = (long)channel.Id;
+                    await _database.UpsertGuildSettingsAsync(settings);
+                    await command.RespondAsync($"Alert channel set to <#{channel.Id}>.", ephemeral: true);
+                    break;
+                }
             case "set-ping-role":
-            {
-                var role = (IRole)subCommand.Options.First().Value!;
-                settings.PingRoleId = (long)role.Id;
-                await _database.UpsertGuildSettingsAsync(settings);
-                await command.RespondAsync($"Ping role set to <@&{role.Id}>.", ephemeral: true);
-                break;
-            }
+                {
+                    var role = (IRole)subCommand.Options.First().Value!;
+                    settings.PingRoleId = (long)role.Id;
+                    await _database.UpsertGuildSettingsAsync(settings);
+                    await command.RespondAsync($"Ping role set to <@&{role.Id}>.", ephemeral: true);
+                    break;
+                }
             case "set-threshold":
-            {
-                var threshold = Convert.ToInt32(subCommand.Options.First().Value);
-                settings.ConfidenceThreshold = Math.Clamp(threshold, 0, 100);
-                await _database.UpsertGuildSettingsAsync(settings);
-                await command.RespondAsync($"Confidence threshold set to {settings.ConfidenceThreshold}%.", ephemeral: true);
-                break;
-            }
+                {
+                    var threshold = Convert.ToInt32(subCommand.Options.First().Value);
+                    settings.ConfidenceThreshold = Math.Clamp(threshold, 0, 100);
+                    await _database.UpsertGuildSettingsAsync(settings);
+                    await command.RespondAsync($"Confidence threshold set to {settings.ConfidenceThreshold}%.", ephemeral: true);
+                    break;
+                }
             case "toggle-ai":
-            {
-                var enabled = Convert.ToBoolean(subCommand.Options.First().Value);
-                settings.AiEnabled = enabled;
-                await _database.UpsertGuildSettingsAsync(settings);
-                await command.RespondAsync($"AI moderation {(enabled ? "enabled" : "disabled")}.", ephemeral: true);
-                break;
-            }
+                {
+                    var enabled = Convert.ToBoolean(subCommand.Options.First().Value);
+                    settings.AiEnabled = enabled;
+                    await _database.UpsertGuildSettingsAsync(settings);
+                    await command.RespondAsync($"AI moderation {(enabled ? "enabled" : "disabled")}.", ephemeral: true);
+                    break;
+                }
             case "toggle-simple-prompts":
-            {
-                var enabled = Convert.ToBoolean(subCommand.Options.First().Value);
-                settings.UseSimplePrompts = enabled;
-                await _database.UpsertGuildSettingsAsync(settings);
-                await command.RespondAsync(
-                    enabled
-                        ? "Simple prompts enabled.\nThe bot will use a shorter, cheaper moderation request."
-                        : "Simple prompts disabled.\nThe bot will use the full moderation request.",
-                    ephemeral: true);
-                break;
-            }
+                {
+                    var enabled = Convert.ToBoolean(subCommand.Options.First().Value);
+                    settings.UseSimplePrompts = enabled;
+                    await _database.UpsertGuildSettingsAsync(settings);
+                    await command.RespondAsync(
+                        enabled
+                            ? "Simple prompts enabled.\nThe bot will use a shorter, cheaper moderation request."
+                            : "Simple prompts disabled.\nThe bot will use the full moderation request.",
+                        ephemeral: true);
+                    break;
+                }
         }
     }
 
@@ -386,157 +535,157 @@ public sealed class BotService
         switch (subCommand.Name)
         {
             case "add":
-            {
-                var name = (string)subCommand.Options.First(x => x.Name == "name").Value!;
-                var description = (string)subCommand.Options.First(x => x.Name == "description").Value!;
-                var rawExamples = subCommand.Options.FirstOrDefault(x => x.Name == "examples")?.Value as string;
-                var examples = string.IsNullOrWhiteSpace(rawExamples)
-                    ? Array.Empty<string>()
-                    : rawExamples.Split("||", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-                await _database.UpsertRuleAsync(new RuleRecord
                 {
-                    GuildId = guildId,
-                    Name = name,
-                    Description = description,
-                    ExamplesJson = JsonSerializer.Serialize(examples)
-                });
+                    var name = (string)subCommand.Options.First(x => x.Name == "name").Value!;
+                    var description = (string)subCommand.Options.First(x => x.Name == "description").Value!;
+                    var rawExamples = subCommand.Options.FirstOrDefault(x => x.Name == "examples")?.Value as string;
+                    var examples = string.IsNullOrWhiteSpace(rawExamples)
+                        ? Array.Empty<string>()
+                        : rawExamples.Split("||", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-                await command.RespondAsync($"Saved rule **{name}**.", ephemeral: true);
-                break;
-            }
-            case "list":
-            {
-                var rules = await _database.ListRulesAsync(guildId);
-                if (rules.Count == 0)
-                {
-                    await command.RespondAsync("No rules configured yet.", ephemeral: true);
-                    return;
-                }
-
-                var content = string.Join("\n\n", rules.Select(r => $"**{r.Name}**\n{r.Description}"));
-                var chunks = Chunk(content, 1900).ToList();
-                for (var i = 0; i < chunks.Count; i++)
-                {
-                    if (i == 0)
+                    await _database.UpsertRuleAsync(new RuleRecord
                     {
-                        await command.RespondAsync(chunks[i], ephemeral: true);
-                    }
-                    else
-                    {
-                        await command.FollowupAsync(chunks[i], ephemeral: true);
-                    }
-                }
-
-                break;
-            }
-            case "remove":
-            {
-                var name = (string)subCommand.Options.First(x => x.Name == "name").Value!;
-                var removed = await _database.RemoveRuleAsync(guildId, name);
-                await command.RespondAsync(
-                    removed ? $"Removed **{name}**." : $"Rule **{name}** was not found.",
-                    ephemeral: true);
-                break;
-            }
-            case "export":
-            {
-                var rules = await _database.ListRulesAsync(guildId);
-                var export = new RulesExportFile
-                {
-                    GuildId = guildId,
-                    ExportedUtc = DateTime.UtcNow,
-                    Rules = rules.Select(r => new RuleImportItem
-                    {
-                        Name = r.Name,
-                        Description = r.Description,
-                        Examples = DeserializeExamples(r.ExamplesJson)
-                    }).ToList()
-                };
-
-                var json = JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
-                var bytes = Encoding.UTF8.GetBytes(json);
-                await using var stream = new MemoryStream(bytes);
-                var attachment = new FileAttachment(stream, $"rules-{guildId}-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
-                await command.RespondWithFileAsync(
-                    attachment,
-                    text: $"Exported {export.Rules.Count} rule(s).",
-                    ephemeral: true);
-                break;
-            }
-            case "import":
-            {
-                await command.DeferAsync(ephemeral: true);
-                var attachmentOption = subCommand.Options.First(x => x.Name == "file");
-                var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
-                var attachment = (IAttachment)attachmentOption.Value!;
-
-                if (!attachment.Filename.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-                {
-                    await command.FollowupAsync("Import file must be a JSON file.", ephemeral: true);
-                    return;
-                }
-
-                var client = _httpClientFactory.CreateClient();
-                var json = await client.GetStringAsync(attachment.Url);
-                RulesExportFile? importFile;
-                try
-                {
-                    importFile = JsonSerializer.Deserialize<RulesExportFile>(json, new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
+                        GuildId = guildId,
+                        Name = name,
+                        Description = description,
+                        ExamplesJson = JsonSerializer.Serialize(examples)
                     });
-                }
-                catch (JsonException)
-                {
-                    await command.FollowupAsync("That file is not valid JSON for rule import.", ephemeral: true);
-                    return;
-                }
 
-                if (importFile is null || importFile.Rules.Count == 0)
-                {
-                    await command.FollowupAsync("The import file did not contain any rules.", ephemeral: true);
-                    return;
+                    await command.RespondAsync($"Saved rule **{name}**.", ephemeral: true);
+                    break;
                 }
-
-                var importedCount = await UpsertImportedRulesAsync(guildId, importFile.Rules, replaceExisting);
-                if (importedCount == 0)
+            case "list":
                 {
-                    await command.FollowupAsync("No valid rules were found in the file.", ephemeral: true);
-                    return;
-                }
+                    var rules = await _database.ListRulesAsync(guildId);
+                    if (rules.Count == 0)
+                    {
+                        await command.RespondAsync("No rules configured yet.", ephemeral: true);
+                        return;
+                    }
 
-                await command.FollowupAsync(
-                    replaceExisting
-                        ? $"Imported {importedCount} rule(s) and replaced existing rules."
-                        : $"Imported {importedCount} rule(s).\nExisting rules with matching names were updated.",
-                    ephemeral: true);
-                break;
-            }
+                    var content = string.Join("\n\n", rules.Select(r => $"**{r.Name}**\n{r.Description}"));
+                    var chunks = Chunk(content, 1900).ToList();
+                    for (var i = 0; i < chunks.Count; i++)
+                    {
+                        if (i == 0)
+                        {
+                            await command.RespondAsync(chunks[i], ephemeral: true);
+                        }
+                        else
+                        {
+                            await command.FollowupAsync(chunks[i], ephemeral: true);
+                        }
+                    }
+
+                    break;
+                }
+            case "remove":
+                {
+                    var name = (string)subCommand.Options.First(x => x.Name == "name").Value!;
+                    var removed = await _database.RemoveRuleAsync(guildId, name);
+                    await command.RespondAsync(
+                        removed ? $"Removed **{name}**." : $"Rule **{name}** was not found.",
+                        ephemeral: true);
+                    break;
+                }
+            case "export":
+                {
+                    var rules = await _database.ListRulesAsync(guildId);
+                    var export = new RulesExportFile
+                    {
+                        GuildId = guildId,
+                        ExportedUtc = DateTime.UtcNow,
+                        Rules = rules.Select(r => new RuleImportItem
+                        {
+                            Name = r.Name,
+                            Description = r.Description,
+                            Examples = DeserializeExamples(r.ExamplesJson)
+                        }).ToList()
+                    };
+
+                    var json = JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
+                    var bytes = Encoding.UTF8.GetBytes(json);
+                    await using var stream = new MemoryStream(bytes);
+                    var attachment = new FileAttachment(stream, $"rules-{guildId}-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
+                    await command.RespondWithFileAsync(
+                        attachment,
+                        text: $"Exported {export.Rules.Count} rule(s).",
+                        ephemeral: true);
+                    break;
+                }
+            case "import":
+                {
+                    await command.DeferAsync(ephemeral: true);
+                    var attachmentOption = subCommand.Options.First(x => x.Name == "file");
+                    var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
+                    var attachment = (IAttachment)attachmentOption.Value!;
+
+                    if (!attachment.Filename.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await command.FollowupAsync("Import file must be a JSON file.", ephemeral: true);
+                        return;
+                    }
+
+                    var client = _httpClientFactory.CreateClient();
+                    var json = await client.GetStringAsync(attachment.Url);
+                    RulesExportFile? importFile;
+                    try
+                    {
+                        importFile = JsonSerializer.Deserialize<RulesExportFile>(json, new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+                    }
+                    catch (JsonException)
+                    {
+                        await command.FollowupAsync("That file is not valid JSON for rule import.", ephemeral: true);
+                        return;
+                    }
+
+                    if (importFile is null || importFile.Rules.Count == 0)
+                    {
+                        await command.FollowupAsync("The import file did not contain any rules.", ephemeral: true);
+                        return;
+                    }
+
+                    var importedCount = await UpsertImportedRulesAsync(guildId, importFile.Rules, replaceExisting);
+                    if (importedCount == 0)
+                    {
+                        await command.FollowupAsync("No valid rules were found in the file.", ephemeral: true);
+                        return;
+                    }
+
+                    await command.FollowupAsync(
+                        replaceExisting
+                            ? $"Imported {importedCount} rule(s) and replaced existing rules."
+                            : $"Imported {importedCount} rule(s).\nExisting rules with matching names were updated.",
+                        ephemeral: true);
+                    break;
+                }
             case "seed-catholic-heresy":
-            {
-                var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
-                var pack = CatholicRulePack.Create(guildId);
-                var importedCount = await UpsertImportedRulesAsync(guildId, pack.Rules, replaceExisting);
-                await command.RespondAsync(
-                    replaceExisting
-                        ? $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s) and replaced existing rules."
-                        : $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s).\nExisting rules with matching names were updated.",
-                    ephemeral: true);
-                break;
-            }
+                {
+                    var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
+                    var pack = CatholicRulePack.Create(guildId);
+                    var importedCount = await UpsertImportedRulesAsync(guildId, pack.Rules, replaceExisting);
+                    await command.RespondAsync(
+                        replaceExisting
+                            ? $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s) and replaced existing rules."
+                            : $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s).\nExisting rules with matching names were updated.",
+                        ephemeral: true);
+                    break;
+                }
             case "seed-catholic-morality":
-            {
-                var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
-                var pack = CatholicMoralityRulePack.Create(guildId);
-                var importedCount = await UpsertImportedRulesAsync(guildId, pack.Rules, replaceExisting);
-                await command.RespondAsync(
-                    replaceExisting
-                        ? $"Seeded **{CatholicMoralityRulePack.PackName}** with {importedCount} rule(s) and replaced existing rules."
-                        : $"Seeded **{CatholicMoralityRulePack.PackName}** with {importedCount} rule(s).\nExisting rules with matching names were updated.",
-                    ephemeral: true);
-                break;
-            }
+                {
+                    var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
+                    var pack = CatholicMoralityRulePack.Create(guildId);
+                    var importedCount = await UpsertImportedRulesAsync(guildId, pack.Rules, replaceExisting);
+                    await command.RespondAsync(
+                        replaceExisting
+                            ? $"Seeded **{CatholicMoralityRulePack.PackName}** with {importedCount} rule(s) and replaced existing rules."
+                            : $"Seeded **{CatholicMoralityRulePack.PackName}** with {importedCount} rule(s).\nExisting rules with matching names were updated.",
+                        ephemeral: true);
+                    break;
+                }
         }
     }
 
@@ -584,35 +733,35 @@ public sealed class BotService
         switch (subCommand.Name)
         {
             case "approve":
-            {
-                var alertId = Convert.ToInt64(subCommand.Options.First(x => x.Name == "id").Value);
-                var notes = subCommand.Options.FirstOrDefault(x => x.Name == "notes")?.Value as string;
-                var updated = await _database.SetAlertFeedbackAsync(alertId, guildId, "approved", notes, command.User.Id);
-                await command.RespondAsync(updated ? $"Alert #{alertId} marked approved." : $"Alert #{alertId} not found.", ephemeral: true);
-                break;
-            }
-            case "reject":
-            {
-                var alertId = Convert.ToInt64(subCommand.Options.First(x => x.Name == "id").Value);
-                var notes = subCommand.Options.FirstOrDefault(x => x.Name == "notes")?.Value as string;
-                var updated = await _database.SetAlertFeedbackAsync(alertId, guildId, "rejected", notes, command.User.Id);
-                await command.RespondAsync(updated ? $"Alert #{alertId} marked rejected." : $"Alert #{alertId} not found.", ephemeral: true);
-                break;
-            }
-            case "list":
-            {
-                var status = (subCommand.Options.FirstOrDefault(x => x.Name == "status")?.Value as string) ?? "all";
-                var alerts = await _database.ListAlertsAsync(guildId, status, 15);
-                if (alerts.Count == 0)
                 {
-                    await command.RespondAsync("No alerts found.", ephemeral: true);
-                    return;
+                    var alertId = Convert.ToInt64(subCommand.Options.First(x => x.Name == "id").Value);
+                    var notes = subCommand.Options.FirstOrDefault(x => x.Name == "notes")?.Value as string;
+                    var updated = await _database.SetAlertFeedbackAsync(alertId, guildId, "approved", notes, command.User.Id);
+                    await command.RespondAsync(updated ? $"Alert #{alertId} marked approved." : $"Alert #{alertId} not found.", ephemeral: true);
+                    break;
                 }
+            case "reject":
+                {
+                    var alertId = Convert.ToInt64(subCommand.Options.First(x => x.Name == "id").Value);
+                    var notes = subCommand.Options.FirstOrDefault(x => x.Name == "notes")?.Value as string;
+                    var updated = await _database.SetAlertFeedbackAsync(alertId, guildId, "rejected", notes, command.User.Id);
+                    await command.RespondAsync(updated ? $"Alert #{alertId} marked rejected." : $"Alert #{alertId} not found.", ephemeral: true);
+                    break;
+                }
+            case "list":
+                {
+                    var status = (subCommand.Options.FirstOrDefault(x => x.Name == "status")?.Value as string) ?? "all";
+                    var alerts = await _database.ListAlertsAsync(guildId, status, 15);
+                    if (alerts.Count == 0)
+                    {
+                        await command.RespondAsync("No alerts found.", ephemeral: true);
+                        return;
+                    }
 
-                var lines = alerts.Select(a => $"**#{a.Id}** [{a.FeedbackStatus}] Rule={a.RuleName} Confidence={a.Confidence}% User=<@{a.UserId}> Text=\"{Trim(a.MessageContent, 80)}\"");
-                await command.RespondAsync(string.Join("\n", lines), ephemeral: true);
-                break;
-            }
+                    var lines = alerts.Select(a => $"**#{a.Id}** [{a.FeedbackStatus}] Rule={a.RuleName} Confidence={a.Confidence}% User=<@{a.UserId}> Text=\"{Trim(a.MessageContent, 80)}\"");
+                    await command.RespondAsync(string.Join("\n", lines), ephemeral: true);
+                    break;
+                }
         }
     }
 
