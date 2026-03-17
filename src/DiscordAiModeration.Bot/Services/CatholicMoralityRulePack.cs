@@ -16,107 +16,97 @@ public static class CatholicMoralityRulePack
             {
                 new()
                 {
-                    Name = "Moral Teaching Good-Faith Exemption",
-                    Description = """
-Do not alert on respectful questions, requests for Church teaching, pastoral counseling, repentance, testimony against sin, recovery discussion, medical triage discussion without advocacy, or quoting another position for debate.
-CCC References: CCC 1783-1785, CCC 1802
-Catechism Quote: "Conscience must be informed and moral judgment enlightened."
-""",
-                    Examples = new[]
+                    Name = "Moral Teaching Good-Faith Exemption (CCC 1735, 1782, 2352)",
+                    Description = "Do not alert on respectful questions, requests for Church teaching, pastoral counseling, repentance, testimony against sin, recovery discussion, medical triage discussion without advocacy, or quoting another position for debate. This exemption should win unless the message clearly promotes conduct contrary to Catholic moral teaching. Relevant CCC references: 1735, 1782, 1828, 2352.",
+                    Examples = new List<string>
                     {
-                        "What does the Church teach about contraception?",
-                        "I used to be addicted and I want help quitting.",
-                        "Can someone explain why Catholics reject abortion?"
+                        "What does the Catechism say about contraception?",
+                        "I used to sleep around and I regret it. Please pray for me.",
+                        "Can someone explain why the Church says abortion is wrong?",
+                        "I am trying to quit porn and drugs."
                     }
                 },
                 new()
                 {
-                    Name = "Abortion Advocacy",
-                    Description = """
-Flag messages that defend, celebrate, recommend, normalize, or encourage abortion as morally acceptable. Do not flag medical emergency discussion that does not advocate abortion as a good.
-CCC References: CCC 2270-2275
-Catechism Quote: "Since the first century the Church has affirmed the moral evil of every procured abortion."
-""",
-                    Examples = new[]
+                    Name = "Abortion advocacy or normalization (CCC 2270-2275)",
+                    Description = "Alert when a message defends, celebrates, recommends, normalizes, or encourages abortion as morally acceptable, a right, a good solution, or a routine personal choice. Do not alert on miscarriage, ectopic pregnancy triage discussion without advocacy, legal news reporting, or sincere requests for explanation. Relevant CCC references: 2270-2275, especially 2271.",
+                    Examples = new List<string>
                     {
-                        "Abortion is healthcare and always morally fine.",
+                        "Abortion is healthcare and there is nothing morally wrong with it.",
                         "Just get an abortion and move on.",
-                        "There is nothing wrong with killing the unborn."
+                        "Women should always have the right to kill the baby if they want.",
+                        "Abortion is a good solution when a pregnancy is inconvenient."
                     }
                 },
                 new()
                 {
-                    Name = "Contraception Advocacy",
-                    Description = """
-Flag messages that promote contraception as morally good or urge Catholics to reject the Church's teaching on openness to life in marriage.
-CCC References: CCC 2366-2370
-Catechism Quote: "Every action which... proposes, whether as an end or as a means, to render procreation impossible is intrinsically evil."
-""",
-                    Examples = new[]
+                    Name = "Contraception promotion or mockery of openness to life (CCC 2366-2370)",
+                    Description = "Alert when a message promotes contraception as morally good, urges Catholics to reject the Church's teaching on openness to life, or mocks chastity and marital openness to children in a direct promotional way. Do not alert on questions about NFP, infertility grief, or good-faith doctrinal discussion. Relevant CCC references: 2366-2370, especially 2370.",
+                    Examples = new List<string>
                     {
-                        "Contraception is always morally good.",
-                        "Catholics should ignore the Church and use birth control.",
-                        "There is nothing sinful about deliberately sterilizing sex."
+                        "Catholics should ignore the Church and use birth control however they want.",
+                        "Contraception is obviously good and the Church is wrong to oppose it.",
+                        "Anyone who is open to life is stupid. Just use contraception.",
+                        "Married Catholics should reject Humanae Vitae and contracept."
                     }
                 },
                 new()
                 {
-                    Name = "Promotion of Sex Outside Marriage",
-                    Description = """
-Flag messages that celebrate or encourage fornication, adultery, hookups, or sexual behavior outside valid marriage as morally acceptable.
-CCC References: CCC 2337-2353, CCC 2380-2381
-Catechism Quote: "Sexual pleasure is morally disordered when sought for itself, isolated from its procreative and unitive purposes."
-""",
-                    Examples = new[]
+                    Name = "Sex outside marriage or adultery promotion (CCC 2337-2359, 2380-2381)",
+                    Description = "Alert when a message celebrates, encourages, or pressures others toward fornication, hookup culture, adultery, prostitution, or other sexual conduct outside marriage as morally acceptable. Do not alert on repentance, abuse support, questions, or non-promotional discussion of past sin. Relevant CCC references: 2337-2359, 2353, 2380-2381.",
+                    Examples = new List<string>
                     {
-                        "Casual sex is totally fine.",
-                        "Sleep around while you are young.",
-                        "Cheating is okay if you do not get caught."
+                        "Casual sex is totally fine. Sleep around while you're young.",
+                        "There is nothing wrong with sex before marriage.",
+                        "Cheating on your spouse is fine if they never find out.",
+                        "Hooking up with random people is healthy and normal."
                     }
                 },
                 new()
                 {
-                    Name = "Pornography or Lewd Promotion",
-                    Description = """
-Flag messages that promote pornography, sexual exploitation, sharing explicit sexual content, or encouraging others to consume such content.
-CCC References: CCC 2354
-Catechism Quote: "Pornography consists in removing real or simulated sexual acts from the intimacy of the partners, in order to display them deliberately to third parties."
-""",
-                    Examples = new[]
+                    Name = "Pornography or explicit sexual exploitation promotion (CCC 2354-2355)",
+                    Description = "Alert when a message promotes pornography, OnlyFans-style sexual exploitation, sexting, nude exchanges, or explicit sexual behavior in a celebratory or encouraging way. Do not alert on anti-porn discussion, recovery support, or non-graphic moral discussion. Relevant CCC references: 2354-2355.",
+                    Examples = new List<string>
                     {
                         "Porn is healthy and everyone should watch it.",
-                        "Send explicit pics here.",
-                        "OnlyFans content is morally great and should be promoted."
+                        "Send nudes. It is not a big deal.",
+                        "OnlyFans is a great moral way to make money.",
+                        "You should watch porn to improve your sex life."
                     }
                 },
                 new()
                 {
-                    Name = "Drug Use Promotion",
-                    Description = """
-Flag messages that encourage recreational drug abuse, intoxication, or misuse of substances in a way contrary to sobriety and moral responsibility.
-CCC References: CCC 2290-2291
-Catechism Quote: "The use of drugs inflicts very grave damage on human health and life."
-""",
-                    Examples = new[]
+                    Name = "Drug use promotion (CCC 2290-2291)",
+                    Description = "Alert when a message glorifies, encourages, pressures, or normalizes recreational drug use, intoxication, or abuse of illegal or non-medical substances. Do not alert on addiction recovery, legal news, prescribed medical use, or warnings against drug abuse. Relevant CCC references: 2290-2291.",
+                    Examples = new List<string>
                     {
-                        "Everyone should get high this weekend.",
-                        "Try cocaine at least once.",
-                        "Abusing pills is no big deal."
+                        "You should try cocaine at least once.",
+                        "Getting high every weekend is awesome.",
+                        "Everyone should do edibles and chill.",
+                        "Hard drugs are fine if they make you feel good."
                     }
                 },
                 new()
                 {
-                    Name = "Drunkenness or Alcohol Abuse Promotion",
-                    Description = """
-Flag messages that celebrate drunkenness, binge drinking, or pressure others into getting drunk. Do not flag ordinary discussion of lawful moderate alcohol use.
-CCC References: CCC 2290
-Catechism Quote: "The virtue of temperance disposes us to avoid every kind of excess."
-""",
-                    Examples = new[]
+                    Name = "Drunkenness or alcohol abuse promotion (CCC 2290)",
+                    Description = "Alert when a message celebrates drunkenness, binge drinking, or pressures others to get wasted, blackout drunk, or abuse alcohol. Do not alert on moderate lawful alcohol use, cooking, cultural discussion, or condemnation of drunkenness. Relevant CCC references: 2290.",
+                    Examples = new List<string>
                     {
-                        "Let us get wasted tonight.",
+                        "Let's get wasted tonight.",
                         "Being blackout drunk is the best.",
-                        "You are lame if you do not get drunk."
+                        "You are lame if you do not get drunk with us.",
+                        "Drink until you cannot stand up."
+                    }
+                },
+                new()
+                {
+                    Name = "Persistent public contradiction of Catholic moral teaching after correction (CCC 2032-2040)",
+                    Description = "Alert when a user persistently and assertively keeps promoting grave moral error after correction by moderators or catechetical explanation, especially when they continue to pressure others to reject Catholic teaching on life, sexuality, chastity, sobriety, or openness to life. This is for repeated agitation, not one-off confusion. Relevant CCC references: 2032-2040, 1785.",
+                    Examples = new List<string>
+                    {
+                        "I know the Church condemns abortion, but I am going to keep telling everyone it is good.",
+                        "Even after the mods corrected me, I will keep teaching that porn and hookups are fine.",
+                        "I was already told what Catholic teaching is and I am still going to push people to get high and get drunk."
                     }
                 }
             }
