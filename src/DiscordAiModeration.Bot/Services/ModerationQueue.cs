@@ -81,20 +81,29 @@ public sealed class ModerationQueue
 
         if (!settings.AiEnabled)
         {
-            _logger.LogInformation("Skipping message {MessageId}: AI moderation disabled for guild {GuildId}.", request.MessageId, request.GuildId);
+            _logger.LogInformation(
+                "Skipping message {MessageId}: AI moderation disabled for guild {GuildId}.",
+                request.MessageId,
+                request.GuildId);
             return;
         }
 
         if (settings.AlertChannelId is null)
         {
-            _logger.LogWarning("Skipping message {MessageId}: no alert channel configured for guild {GuildId}.", request.MessageId, request.GuildId);
+            _logger.LogWarning(
+                "Skipping message {MessageId}: no alert channel configured for guild {GuildId}.",
+                request.MessageId,
+                request.GuildId);
             return;
         }
 
         var rules = await _database.ListRulesAsync(request.GuildId, cancellationToken);
         if (rules.Count == 0)
         {
-            _logger.LogInformation("Skipping message {MessageId}: no moderation rules configured for guild {GuildId}.", request.MessageId, request.GuildId);
+            _logger.LogInformation(
+                "Skipping message {MessageId}: no moderation rules configured for guild {GuildId}.",
+                request.MessageId,
+                request.GuildId);
             return;
         }
 
@@ -107,7 +116,12 @@ public sealed class ModerationQueue
             feedbackExamples.Count,
             settings.ConfidenceThreshold);
 
-        var decision = await _aiModerationService.EvaluateAsync(request, settings, rules, feedbackExamples, cancellationToken);
+        var decision = await _aiModerationService.EvaluateAsync(
+            request,
+            settings,
+            rules,
+            feedbackExamples,
+            cancellationToken);
 
         _logger.LogInformation(
             "AI decision for message {MessageId}: ShouldAlert={ShouldAlert} Rule={RuleName} Confidence={Confidence} Reason=\"{Reason}\" ElapsedMs={ElapsedMs}",
@@ -134,19 +148,23 @@ public sealed class ModerationQueue
             return;
         }
 
-        var alertId = await _database.InsertAlertAsync(new AlertRecord
-        {
-            GuildId = request.GuildId,
-            MessageId = request.MessageId,
-            ChannelId = request.ChannelId,
-            UserId = request.UserId,
-            RuleName = decision.RuleName,
-            Confidence = decision.Confidence,
-            Reason = decision.Reason,
-            MessageContent = request.Content,
-            FeedbackStatus = "pending",
-            CreatedUtc = DateTime.UtcNow
-        }, cancellationToken);
+        var finalReason = BuildReasonWithCatechismSupport(decision.Reason, decision.RuleName, rules);
+
+        var alertId = await _database.InsertAlertAsync(
+            new AlertRecord
+            {
+                GuildId = request.GuildId,
+                MessageId = request.MessageId,
+                ChannelId = request.ChannelId,
+                UserId = request.UserId,
+                RuleName = decision.RuleName,
+                Confidence = decision.Confidence,
+                Reason = finalReason,
+                MessageContent = request.Content,
+                FeedbackStatus = "pending",
+                CreatedUtc = DateTime.UtcNow
+            },
+            cancellationToken);
 
         if (_discordClient.GetChannel((ulong)settings.AlertChannelId.Value) is not IMessageChannel alertChannel)
         {
@@ -169,7 +187,7 @@ public sealed class ModerationQueue
             .AddField("Message Link", messageLink, false)
             .AddField("Rule", decision.RuleName, true)
             .AddField("Confidence", $"{decision.Confidence}%", true)
-            .AddField("Reason", string.IsNullOrWhiteSpace(decision.Reason) ? "No reason provided." : decision.Reason)
+            .AddField("Reason", string.IsNullOrWhiteSpace(finalReason) ? "No reason provided." : finalReason)
             .AddField("Message", $"```{TrimForCodeBlock(request.Content, 900)}```")
             .WithCurrentTimestamp()
             .Build();
@@ -193,5 +211,160 @@ public sealed class ModerationQueue
     {
         content = content.Replace("```", "'''");
         return content.Length <= maxLength ? content : content[..maxLength] + "...";
+    }
+
+    private static string BuildReasonWithCatechismSupport<T>(string? reason, string? ruleName, IReadOnlyList<T> rules)
+    {
+        var cleanedReason = string.IsNullOrWhiteSpace(reason) ? "Likely violation of Catholic moderation rules." : reason.Trim();
+
+        if (string.IsNullOrWhiteSpace(ruleName))
+        {
+            return cleanedReason;
+        }
+
+        if (ContainsCatechismSupport(cleanedReason))
+        {
+            return cleanedReason;
+        }
+
+        var support = TryExtractCatechismSupportFromRules(ruleName, rules);
+        if (string.IsNullOrWhiteSpace(support))
+        {
+            support = TryGetBuiltInCatechismSupport(ruleName);
+        }
+
+        if (string.IsNullOrWhiteSpace(support))
+        {
+            return cleanedReason;
+        }
+
+        return $"{cleanedReason}\n\n{support}";
+    }
+
+    private static bool ContainsCatechismSupport(string reason)
+        => reason.Contains("CCC", StringComparison.OrdinalIgnoreCase)
+            || reason.Contains("Catechism", StringComparison.OrdinalIgnoreCase);
+
+    private static string? TryExtractCatechismSupportFromRules<T>(string ruleName, IReadOnlyList<T> rules)
+    {
+        foreach (var rule in rules)
+        {
+            var candidateName = GetPropertyValue(rule, "Name");
+            if (!string.Equals(candidateName, ruleName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var description = GetPropertyValue(rule, "Description");
+            if (string.IsNullOrWhiteSpace(description))
+            {
+                return null;
+            }
+
+            var quote = ExtractMetadataValue(description, "Catechism Quote:");
+            var refs = ExtractMetadataValue(description, "CCC References:");
+
+            if (!string.IsNullOrWhiteSpace(quote) && !string.IsNullOrWhiteSpace(refs))
+            {
+                return $"Catechism: \"{quote.Trim()}\" (CCC {refs.Trim()})";
+            }
+
+            if (!string.IsNullOrWhiteSpace(quote))
+            {
+                return $"Catechism: \"{quote.Trim()}\"";
+            }
+
+            if (!string.IsNullOrWhiteSpace(refs))
+            {
+                return $"Catechism: see CCC {refs.Trim()}.";
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    private static string? GetPropertyValue<T>(T source, string propertyName)
+    {
+        var property = source?.GetType().GetProperty(propertyName);
+        if (property?.GetValue(source) is string value && !string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        return null;
+    }
+
+    private static string? ExtractMetadataValue(string text, string label)
+    {
+        using var reader = new StringReader(text);
+        while (reader.ReadLine() is { } line)
+        {
+            if (line.TrimStart().StartsWith(label, StringComparison.OrdinalIgnoreCase))
+            {
+                return line[(line.IndexOf(':') + 1)..].Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static string? TryGetBuiltInCatechismSupport(string ruleName)
+    {
+        var normalized = ruleName.Trim().ToLowerInvariant();
+
+        return normalized switch
+        {
+            var n when n.Contains("trinity") || n.Contains("christ's divinity") || n.Contains("christs divinity")
+                => "Catechism: \"The Trinity is One. We do not confess three Gods, but one God in three persons.\" (CCC 253)",
+
+            var n when n.Contains("incarnation") || n.Contains("resurrection") || n.Contains("creedal")
+                => "Catechism: \"The Resurrection of Jesus is the crowning truth of our faith in Christ.\" (CCC 638)",
+
+            var n when n.Contains("real presence") || n.Contains("eucharist")
+                => "Catechism: \"In the most blessed sacrament of the Eucharist the body and blood, together with the soul and divinity, of our Lord Jesus Christ... is truly, really, and substantially contained.\" (CCC 1374)",
+
+            var n when n.Contains("baptism")
+                => "Catechism: \"Holy Baptism is the basis of the whole Christian life... Through Baptism we are freed from sin and reborn as sons of God.\" (CCC 1213)",
+
+            var n when n.Contains("confession") || n.Contains("absolution")
+                => "Catechism: \"Since Christ entrusted to his apostles the ministry of reconciliation, bishops who are their successors, and priests, the bishops' collaborators, continue to exercise this ministry.\" (CCC 1461)",
+
+            var n when n.Contains("teaching authority") || n.Contains("apostolic succession")
+                => "Catechism: \"The task of giving an authentic interpretation of the Word of God... has been entrusted to the living teaching office of the Church alone.\" (CCC 85)",
+
+            var n when n.Contains("anti-catholic slander")
+                => "Catechism: \"Idolatry not only refers to false pagan worship. It remains a constant temptation to faith.\" (CCC 2113)",
+
+            var n when n.Contains("leaving the church") || n.Contains("rejecting the sacraments")
+                => "Catechism: \"The Church affirms that for believers the sacraments of the New Covenant are necessary for salvation.\" (CCC 1129)",
+
+            var n when n.Contains("persistent catechism contradiction") || n.Contains("heresy")
+                => "Catechism: \"Heresy is the obstinate post-baptismal denial of some truth which must be believed with divine and catholic faith.\" (CCC 2089)",
+
+            var n when n.Contains("abortion")
+                => "Catechism: \"Human life must be respected and protected absolutely from the moment of conception.\" (CCC 2270) \"Since the first century the Church has affirmed the moral evil of every procured abortion.\" (CCC 2271)",
+
+            var n when n.Contains("contraception")
+                => "Catechism: \"Every action which... proposes, whether as an end or as a means, to render procreation impossible is intrinsically evil.\" (CCC 2370)",
+
+            var n when n.Contains("porn") || n.Contains("lewd")
+                => "Catechism: \"Pornography... does grave injury to the dignity of its participants... It is a grave offense.\" (CCC 2354)",
+
+            var n when n.Contains("sex outside marriage") || n.Contains("fornication")
+                => "Catechism: \"Fornication is carnal union between an unmarried man and an unmarried woman. It is gravely contrary to the dignity of persons.\" (CCC 2353)",
+
+            var n when n.Contains("adultery")
+                => "Catechism: \"Adultery refers to marital infidelity... It is an injustice.\" (CCC 2380)",
+
+            var n when n.Contains("drug")
+                => "Catechism: \"The use of drugs inflicts very grave damage on human health and life. Their use, except on strictly therapeutic grounds, is a grave offense.\" (CCC 2291)",
+
+            var n when n.Contains("drunkenness") || n.Contains("alcohol")
+                => "Catechism: \"The virtue of temperance disposes us to avoid every kind of excess: the abuse of food, alcohol, tobacco, or medicine.\" (CCC 2290)",
+
+            _ => null
+        };
     }
 }
