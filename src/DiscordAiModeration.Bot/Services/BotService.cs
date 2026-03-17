@@ -125,6 +125,11 @@ public sealed class BotService
                 .WithName("seed-catholic-heresy")
                 .WithDescription("Install the built-in Catholic heresy rule pack")
                 .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("replace-existing", ApplicationCommandOptionType.Boolean, "If true, remove existing rules before seeding", false))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("seed-catholic-morality")
+                .WithDescription("Install the built-in Catholic moral teaching rule pack")
+                .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption("replace-existing", ApplicationCommandOptionType.Boolean, "If true, remove existing rules before seeding", false));
 
         var reviewCommand = new SlashCommandBuilder()
@@ -460,6 +465,21 @@ public sealed class BotService
                     replaceExisting
                         ? $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s) and replaced existing rules."
                         : $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s). Existing rules with matching names were updated.",
+                    ephemeral: true);
+
+                break;
+            }
+
+            case "seed-catholic-morality":
+            {
+                var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
+                var pack = CatholicMoralityRulePack.Create(guildId);
+                var importedCount = await UpsertImportedRulesAsync(guildId, pack.Rules, replaceExisting);
+
+                await command.RespondAsync(
+                    replaceExisting
+                        ? $"Seeded **{CatholicMoralityRulePack.PackName}** with {importedCount} rule(s) and replaced existing rules."
+                        : $"Seeded **{CatholicMoralityRulePack.PackName}** with {importedCount} rule(s). Existing rules with matching names were updated.",
                     ephemeral: true);
 
                 break;

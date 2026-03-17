@@ -1,32 +1,18 @@
-Catholic Heresy Watch update pack
+# Catholic morality rule pack update
 
-What is included
-- catholic-heresy-rules.json
-  Import this directly with your existing /rules import command.
-- optional-code-update/src/DiscordAiModeration.Bot/Services/CatholicRulePack.cs
-  Helper class for a built-in Catholic rule pack.
-- optional-code-update/src/DiscordAiModeration.Infrastructure/Services/SharedPromptBuilder.cs
-  Optional prompt builder replacement with stronger good-faith exemptions.
-- optional-code-update/snippets/BotService_seed_command_snippet.txt
-  Snippet for adding a one-click /rules seed-catholic-heresy slash command.
+This pack is designed to be loaded **after** the Catholic heresy pack.
 
-Fastest setup
-1. In Discord, run /rules import
-2. Upload catholic-heresy-rules.json
-3. Set replace-existing = true if you want a clean install
-4. Set your threshold to 80 or 85 for local Ollama models
-5. Keep human review on; do not auto-punish from doctrinal flags alone
+## What it adds
+- A second built-in seed command: `/rules seed-catholic-morality`
+- A standalone JSON import file: `catholic-morality-rules.json`
+- A new helper class: `CatholicMoralityRulePack.cs`
 
-Recommended settings
-- OpenAI: threshold 75 to 85
-- Ollama / llama3.2: threshold 85 to 92
-- Use simple prompts only if you need lower token cost; otherwise use full prompts
+## Recommended install order
+1. `/rules seed-catholic-heresy replace-existing:true`
+2. `/rules seed-catholic-morality replace-existing:false`
 
-Suggested moderation philosophy
-- Alert moderators, do not auto-timeout or auto-ban for theology alone
-- Let the good-faith exemption stay in the ruleset
-- Reject false positives so the feedback loop improves over time
+Using `replace-existing:false` on the second step will append the morality rules to the heresy rules.
 
-Notes
-- The JSON is designed to work with your current import/export format.
-- The optional code changes are intentionally minimal.
+## Notes
+- Rule names are unique, so the second pack should add to the first rather than overwrite it.
+- Rebuild and restart the bot after replacing source files so Discord re-registers slash commands.
