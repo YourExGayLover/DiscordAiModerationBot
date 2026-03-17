@@ -409,9 +409,22 @@ public sealed class BotService
                 : $"Alert #{alertId} dismissed.",
             ephemeral: true);
 
+        await ClearReviewComponentsAsync(component.Message, alertId);
+    }
+
+    private async Task ClearReviewComponentsAsync(IUserMessage? message, long alertId)
+    {
+        if (message is null)
+        {
+            _logger.LogWarning(
+                "Could not clear review buttons for alert {AlertId} because the originating message was not available.",
+                alertId);
+            return;
+        }
+
         try
         {
-            await component.Message.ModifyAsync(properties =>
+            await message.ModifyAsync(properties =>
             {
                 properties.Components = new ComponentBuilder().Build();
             });
@@ -422,7 +435,7 @@ public sealed class BotService
                 ex,
                 "Failed to clear review buttons for alert {AlertId} on message {MessageId}",
                 alertId,
-                component.Message.Id);
+                message.Id);
         }
     }
 
@@ -463,6 +476,7 @@ public sealed class BotService
 
         await modal.RespondAsync($"Alert #{alertId} approved with corrected rule and reason.", ephemeral: true);
 
+        await ClearReviewComponentsAsync(modal.Message, alertId);
     }
 
     private static bool TryParseOverrideModal(
