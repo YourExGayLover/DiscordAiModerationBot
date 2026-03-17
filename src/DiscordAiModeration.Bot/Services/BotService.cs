@@ -160,6 +160,14 @@ public sealed class BotService
                 .AddOption("reason", ApplicationCommandOptionType.String, "Correct moderator reason", true)
                 .AddOption("notes", ApplicationCommandOptionType.String, "Optional moderator notes", false))
             .AddOption(new SlashCommandOptionBuilder()
+                .WithName("teach-message")
+                .WithDescription("Add a missed message as moderator-confirmed training data")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("message-link", ApplicationCommandOptionType.String, "Discord message link to train from", true)
+                .AddOption("rule", ApplicationCommandOptionType.String, "Rule this missed message breaks", true)
+                .AddOption("reason", ApplicationCommandOptionType.String, "Why the message breaks the rule", true)
+                .AddOption("notes", ApplicationCommandOptionType.String, "Optional moderator notes", false))
+            .AddOption(new SlashCommandOptionBuilder()
                 .WithName("list")
                 .WithDescription("List recent alerts")
                 .WithType(ApplicationCommandOptionType.SubCommand)
@@ -894,6 +902,91 @@ public sealed class BotService
                     await command.RespondAsync(updated ? $"Alert #{alertId} approved with corrected rule and reason." : $"Alert #{alertId} not found.", ephemeral: true);
                     break;
                 }
+            case "teach-message":
+                {
+                    var messageLink = (string)subCommand.Options.First(x => x.Name == "message-link").Value!;
+                    var ruleName = ((string)subCommand.Options.First(x => x.Name == "rule").Value!).Trim();
+                    var reason = ((string)subCommand.Options.First(x => x.Name == "reason").Value!).Trim();
+                    var notes = subCommand.Options.FirstOrDefault(x => x.Name == "notes")?.Value as string;
+
+                    if (string.IsNullOrWhiteSpace(ruleName) || string.IsNullOrWhiteSpace(reason))
+                    {
+                        await command.RespondAsync("Rule and reason are required.", ephemeral: true);
+                        return;
+                    }
+
+                    if (!TryParseDiscordMessageLink(messageLink, out var linkedGuildId, out var channelId, out var messageId))
+                    {
+                        await command.RespondAsync("That does not look like a valid Discord message link.", ephemeral: true);
+                        return;
+                    }
+
+                    if (linkedGuildId != (ulong)guildId)
+                    {
+                        await command.RespondAsync("That message link points to a different server.", ephemeral: true);
+                        return;
+                    }
+
+                    var channel = _discordClient.GetChannel(channelId) as IMessageChannel;
+                    if (channel is null)
+                    {
+                        await command.RespondAsync("I could not access that channel. Make sure the bot can view it.", ephemeral: true);
+                        return;
+                    }
+
+                    var fetchedMessage = await channel.GetMessageAsync(messageId);
+                    if (fetchedMessage is not IUserMessage userMessage)
+                    {
+                        await command.RespondAsync("I could not load that message.", ephemeral: true);
+                        return;
+                    }
+
+                    if (userMessage.Author.IsBot)
+                    {
+                        await command.RespondAsync("That message was sent by a bot. Teaching from bot messages is not supported.", ephemeral: true);
+                        return;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(userMessage.Content))
+                    {
+                        await command.RespondAsync("That message has no text content to train from.", ephemeral: true);
+                        return;
+                    }
+
+                    var alertId = await _database.InsertAlertAsync(new AlertRecord
+                    {
+                        GuildId = guildId,
+                        MessageId = (long)userMessage.Id,
+                        ChannelId = (long)userMessage.Channel.Id,
+                        UserId = (long)userMessage.Author.Id,
+                        RuleName = ruleName,
+                        Confidence = 100,
+                        Reason = reason,
+                        MessageContent = userMessage.Content,
+                        FeedbackStatus = "approved",
+                        CreatedUtc = DateTime.UtcNow
+                    });
+
+                    await _database.SetAlertFeedbackAsync(
+                        alertId,
+                        guildId,
+                        "approved",
+                        notes,
+                        command.User.Id,
+                        ruleName,
+                        reason);
+
+                    var jumpUrl = $"https://discord.com/channels/{linkedGuildId}/{channelId}/{messageId}";
+
+                    await command.RespondAsync(
+                        $"Added manual training example as alert #{alertId}.\n" +
+                        $"Rule: {ruleName}\n" +
+                        $"Reason: {reason}\n" +
+                        $"Message: {jumpUrl}",
+                        ephemeral: true);
+
+                    break;
+                }
             case "list":
                 {
                     var status = (subCommand.Options.FirstOrDefault(x => x.Name == "status")?.Value as string) ?? "all";
@@ -1057,6 +1150,32 @@ public sealed class BotService
         {
             return new List<string>();
         }
+    }
+
+    private static bool TryParseDiscordMessageLink(
+        string value,
+        out ulong guildId,
+        out ulong channelId,
+        out ulong messageId)
+    {
+        guildId = 0;
+        channelId = 0;
+        messageId = 0;
+
+        if (string.IsNullOrWhiteSpace(value) || !Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        var parts = uri.AbsolutePath
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return parts.Length == 4
+            && parts[0].Equals("channels", StringComparison.OrdinalIgnoreCase)
+            && ulong.TryParse(parts[1], out guildId)
+            && ulong.TryParse(parts[2], out channelId)
+            && ulong.TryParse(parts[3], out messageId);
     }
 
     private static string Trim(string value, int maxLength) =>
