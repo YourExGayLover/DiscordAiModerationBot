@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "guildId": 1479169632870072486,
+  "exportedUtc": "2026-03-17T01:10:11.2707298Z",
+  "rules": [
+    {
+      "name": "Anti-Catholic Proselytizing",
+      "description": "Flag messages that attempt to persuade Catholics to abandon the Church or accept teachings contrary to Catholic doctrine as truth, especially when presented as correction or preaching. Do not flag neutral debate.",
+      "examples": [
+        "Leave the Catholic Church to be saved.",
+        "Catholicism is a false gospel.",
+        "You need to reject Rome.",
+        "The Catholic Church leads people to hell.",
+        "True Christians are not Catholic.",
+        "You must abandon Catholic teachings."
+      ]
+    },
+    {
+      "name": "Attacks on Mary, the Saints, or Their Veneration",
+      "description": "Flag messages that falsely accuse Catholic teaching of idolatry regarding Mary or the saints, deny their intercession, or mock their veneration in a way that contradicts Church teaching (CCC 956, 971). Do not flag respectful questions.",
+      "examples": [
+        "Catholics worship Mary.",
+        "Praying to saints is necromancy.",
+        "Veneration of saints is idolatry.",
+        "Mary was nothing special.",
+        "The saints cannot hear prayers.",
+        "Devotion to Mary is false worship."
+      ]
+    },
+    {
+      "name": "Blasphemy or Sacrilegious Mockery",
+      "description": "Flag messages that mock or show contempt toward God, Jesus Christ, the Eucharist, the Mass, Scripture, Mary, the saints, or other sacred realities (CCC 2148). This rule is for intentional irreverence, not disagreement.",
+      "examples": [
+        "The Eucharist is just a cracker.",
+        "The Mass is a joke.",
+        "Priests are fake magicians.",
+        "Catholic rituals are stupid.",
+        "Mary devotion is garbage.",
+        "The Church is a scam religion."
+      ]
+    },
+    {
+      "name": "Denial of Justification, Grace, or Salvation as Taught by the Church",
+      "description": "Flag messages that promote doctrines contrary to Catholic teaching on justification, grace, and salvation, such as faith alone excluding cooperation, denial of sanctification, or absolute eternal security (CCC 1987-2029). Do not flag nuanced theological discussion unless it clearly promotes error.",
+      "examples": [
+        "Faith alone saves with no works at all.",
+        "You cannot lose salvation no matter what.",
+        "Works have nothing to do with salvation.",
+        "Sanctification is not necessary.",
+        "Grace does not transform the soul.",
+        "Salvation is a one-time declaration only."
+      ]
+    },
+    {
+      "name": "Denial of the Real Presence or the Sacrifice of the Mass",
+      "description": "Flag messages that deny that the Eucharist is truly the Body, Blood, Soul, and Divinity of Jesus Christ, or that the Mass is a true sacrifice (CCC 1322-1419, 1362-1372). Do not flag good-faith questions.",
+      "examples": [
+        "The Eucharist is just a symbol.",
+        "The Mass is not a sacrifice.",
+        "Communion is only bread and wine.",
+        "Catholics pretend the bread becomes God.",
+        "Transubstantiation is false.",
+        "Jesus is not really present in the Eucharist."
+      ]
+    },
+    {
+      "name": "Denial of the Sacraments or Their Efficacy",
+      "description": "Flag messages that deny the reality, necessity, or effectiveness of the seven sacraments as means of grace instituted by Christ, especially baptism, the Eucharist, and confession (CCC 1113-1131, 1213-1284). Do not flag questions or comparative theology discussions.",
+      "examples": [
+        "Baptism does nothing.",
+        "Confession to a priest is fake.",
+        "Sacraments are just symbolic rituals.",
+        "Priests cannot forgive sins.",
+        "The Church invented the sacraments.",
+        "Grace is not given through sacraments."
+      ]
+    },
+    {
+      "name": "Persistent Promotion of Heresy After Correction",
+      "description": "Flag users who continue to assert previously corrected false teachings in a disruptive or obstinate manner after receiving clarification or correction. Do not flag someone sincerely trying to understand.",
+      "examples": [
+        "I don\u2019t care what the Church teaches, it is still wrong.",
+        "You already corrected me but the Eucharist is still symbolic.",
+        "The pope is illegitimate no matter what you say.",
+        "Catholic doctrine is false and I will keep saying it.",
+        "Your sources do not matter, Catholicism is wrong.",
+        "I will continue rejecting Church teaching."
+      ]
+    },
+    {
+      "name": "Rejection of the Authority of the Catholic Church",
+      "description": "Flag messages that assertively deny that the Catholic Church is the Church founded by Christ, or reject the authority of the Pope, bishops in communion with him, apostolic succession, or the Magisterium as the authentic interpreter of Scripture and Tradition (CCC 85-87, 882-896). Do not flag sincere questions or historical discussion.",
+      "examples": [
+        "The Catholic Church is not the Church founded by Christ.",
+        "The pope has no authority over Christians.",
+        "Apostolic succession is a lie.",
+        "The Church has no authority to interpret Scripture.",
+        "Christ did not establish a visible Church.",
+        "The Magisterium is not binding on believers."
+      ]
+    },
+    {
+      "name": "Rejection of the Catechism or Binding Doctrine",
+      "description": "Flag messages that explicitly reject, undermine, or dismiss the authority of the Catechism of the Catholic Church or definitive teachings of the Magisterium as binding. Includes claims that Catholics can ignore doctrine or define truth for themselves (CCC 88-95, 2032-2040). Do not flag sincere confusion or requests for clarification.",
+      "examples": [
+        "The Catechism is wrong and should be ignored.",
+        "Catholics don\u2019t have to follow Church teaching.",
+        "Doctrine is just man-made and optional.",
+        "You can believe whatever you want and still be Catholic.",
+        "Church teachings are just opinions.",
+        "The Catechism is not authoritative."
+      ]
+    },
+    {
+      "name": "Trinitarian or Christological Heresy",
+      "description": "Flag messages that deny or distort core dogmas about the Trinity or the nature of Jesus Christ, including denying Christ\u2019s divinity or humanity, or rejecting the Trinity (CCC 232-267, 464-478). Do not flag quotations or questions for learning purposes.",
+      "examples": [
+        "Jesus is not God.",
+        "The Trinity is false.",
+        "Christ is a created being.",
+        "Jesus was only a man.",
+        "The Holy Spirit is not a person.",
+        "Jesus is not consubstantial with the Father."
+      ]
+    }
+  ]
+}

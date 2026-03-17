@@ -1,0 +1,42 @@
+Add a new /rules subcommand in RegisterSlashCommandsAsync:
+
+.AddOption(new SlashCommandOptionBuilder()
+    .WithName("seed-catholic-heresy")
+    .WithDescription("Install a ready-made Catholic heresy watch ruleset")
+    .WithType(ApplicationCommandOptionType.SubCommand)
+    .AddOption("replace-existing", ApplicationCommandOptionType.Boolean, "If true, remove existing rules first", false))
+
+Then add this case inside HandleRulesAsync:
+
+case "seed-catholic-heresy":
+{
+    var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
+    if (replaceExisting)
+    {
+        await _database.RemoveAllRulesAsync(guildId);
+    }
+
+    var pack = CatholicRulePack.Create(guildId);
+    foreach (var rule in pack.Rules)
+    {
+        await _database.UpsertRuleAsync(new RuleRecord
+        {
+            GuildId = guildId,
+            Name = rule.Name.Trim(),
+            Description = rule.Description.Trim(),
+            ExamplesJson = JsonSerializer.Serialize(
+                (rule.Examples ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray())
+        });
+    }
+
+    await command.RespondAsync(
+        replaceExisting
+            ? $"Installed {pack.Rules.Count} Catholic heresy-watch rules and replaced existing rules."
+            : $"Installed {pack.Rules.Count} Catholic heresy-watch rules.",
+        ephemeral: true);
+    break;
+}
