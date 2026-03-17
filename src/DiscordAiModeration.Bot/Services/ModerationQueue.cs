@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Discord;
 using Discord.WebSocket;
@@ -16,13 +17,13 @@ public sealed class ModerationQueue
     private readonly IDatabase _database;
     private readonly IAiModerationService _aiModerationService;
     private readonly DiscordSocketClient _discordClient;
-    private readonly ILogger<ModerationQueue> _logger;
+    private readonly ILogger _logger;
 
     public ModerationQueue(
         IDatabase database,
         IAiModerationService aiModerationService,
         DiscordSocketClient discordClient,
-        ILogger<ModerationQueue> logger)
+        ILogger logger)
     {
         _database = database;
         _aiModerationService = aiModerationService;
@@ -109,13 +110,18 @@ public sealed class ModerationQueue
 
         var decision = await _aiModerationService.EvaluateAsync(request, settings, rules, feedbackExamples, cancellationToken);
 
+        var matchedRule = rules.FirstOrDefault(r =>
+            string.Equals(r.Name, decision.RuleName, StringComparison.OrdinalIgnoreCase));
+
+        var reasonWithCatechism = BuildReasonWithCatechism(decision.Reason, matchedRule?.Description);
+
         _logger.LogInformation(
             "AI decision for message {MessageId}: ShouldAlert={ShouldAlert} Rule={RuleName} Confidence={Confidence} Reason=\"{Reason}\" ElapsedMs={ElapsedMs}",
             request.MessageId,
             decision.ShouldAlert,
             decision.RuleName,
             decision.Confidence,
-            HttpLoggingHelper.Truncate(decision.Reason, 300),
+            HttpLoggingHelper.Truncate(reasonWithCatechism, 300),
             stopwatch.ElapsedMilliseconds);
 
         if (!decision.ShouldAlert)
@@ -134,19 +140,21 @@ public sealed class ModerationQueue
             return;
         }
 
-        var alertId = await _database.InsertAlertAsync(new AlertRecord
-        {
-            GuildId = request.GuildId,
-            MessageId = request.MessageId,
-            ChannelId = request.ChannelId,
-            UserId = request.UserId,
-            RuleName = decision.RuleName,
-            Confidence = decision.Confidence,
-            Reason = decision.Reason,
-            MessageContent = request.Content,
-            FeedbackStatus = "pending",
-            CreatedUtc = DateTime.UtcNow
-        }, cancellationToken);
+        var alertId = await _database.InsertAlertAsync(
+            new AlertRecord
+            {
+                GuildId = request.GuildId,
+                MessageId = request.MessageId,
+                ChannelId = request.ChannelId,
+                UserId = request.UserId,
+                RuleName = decision.RuleName,
+                Confidence = decision.Confidence,
+                Reason = reasonWithCatechism,
+                MessageContent = request.Content,
+                FeedbackStatus = "pending",
+                CreatedUtc = DateTime.UtcNow
+            },
+            cancellationToken);
 
         if (_discordClient.GetChannel((ulong)settings.AlertChannelId.Value) is not IMessageChannel alertChannel)
         {
@@ -169,7 +177,7 @@ public sealed class ModerationQueue
             .AddField("Message Link", messageLink, false)
             .AddField("Rule", decision.RuleName, true)
             .AddField("Confidence", $"{decision.Confidence}%", true)
-            .AddField("Reason", string.IsNullOrWhiteSpace(decision.Reason) ? "No reason provided." : decision.Reason)
+            .AddField("Reason", TrimForEmbedField(reasonWithCatechism, 1000))
             .AddField("Message", $"```{TrimForCodeBlock(request.Content, 900)}```")
             .WithCurrentTimestamp()
             .Build();
@@ -186,12 +194,79 @@ public sealed class ModerationQueue
             messageLink);
     }
 
-    private static string BuildDiscordMessageLink(long guildId, long channelId, long messageId)
-        => $"https://discord.com/channels/{guildId}/{channelId}/{messageId}";
+    private static string BuildDiscordMessageLink(long guildId, long channelId, long messageId) =>
+        $"https://discord.com/channels/{guildId}/{channelId}/{messageId}";
 
     private static string TrimForCodeBlock(string content, int maxLength)
     {
         content = content.Replace("```", "'''");
         return content.Length <= maxLength ? content : content[..maxLength] + "...";
     }
+
+    private static string TrimForEmbedField(string content, int maxLength) =>
+        string.IsNullOrWhiteSpace(content)
+            ? "No reason provided."
+            : content.Length <= maxLength
+                ? content
+                : content[..Math.Max(0, maxLength - 3)] + "...";
+
+    private static string BuildReasonWithCatechism(string? aiReason, string? ruleDescription)
+    {
+        var cleanReason = string.IsNullOrWhiteSpace(aiReason)
+            ? "Likely violates the matched Catholic moderation rule."
+            : aiReason.Trim();
+
+        if (ContainsCatechismCitation(cleanReason))
+        {
+            return cleanReason;
+        }
+
+        var (references, quote) = ExtractCatechismMetadata(ruleDescription);
+        if (string.IsNullOrWhiteSpace(references) && string.IsNullOrWhiteSpace(quote))
+        {
+            return cleanReason;
+        }
+
+        if (!string.IsNullOrWhiteSpace(references) && !string.IsNullOrWhiteSpace(quote))
+        {
+            return $"{cleanReason} {references}: \"{quote}\"";
+        }
+
+        if (!string.IsNullOrWhiteSpace(references))
+        {
+            return $"{cleanReason} {references}.";
+        }
+
+        return $"{cleanReason} Catechism Quote: \"{quote}\"";
+    }
+
+    private static bool ContainsCatechismCitation(string text) =>
+        text.Contains("CCC ", StringComparison.OrdinalIgnoreCase) ||
+        text.Contains("Catechism", StringComparison.OrdinalIgnoreCase);
+
+    private static (string? references, string? quote) ExtractCatechismMetadata(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return (null, null);
+        }
+
+        static string? Extract(string source, string label)
+        {
+            var match = Regex.Match(
+                source,
+                $"{Regex.Escape(label)}\\s*:\\s*(.+?)(?=(?:\\r?\\n[A-Z][A-Za-z ]+\\s*:)|$)",
+                RegexOptions.Singleline | RegexOptions.IgnoreCase);
+
+            return match.Success ? Normalize(match.Groups[1].Value) : null;
+        }
+
+        var references = Extract(description, "CCC References");
+        var quote = Extract(description, "Catechism Quote");
+
+        return (references, quote);
+    }
+
+    private static string Normalize(string text) =>
+        Regex.Replace(text, "\\s+", " ").Trim().Trim('"');
 }

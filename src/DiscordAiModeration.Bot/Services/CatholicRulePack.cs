@@ -16,113 +16,107 @@ public static class CatholicRulePack
             {
                 new()
                 {
-                    Name = "Good-Faith Discussion Exemption (CCC 85-87, 159)",
-                    Description = "Do not alert on respectful questions, requests for clarification, quoting another position for discussion, asking what Catholics believe, comparing traditions in good faith, or imperfect wording where the user is plainly seeking understanding rather than asserting error. This exemption should win unless the message clearly promotes or teaches against Catholic doctrine. Relevant CCC references: 85-87, 94, 159.",
-                    Examples = new List<string>
+                    Name = "Good-Faith Discussion Exemption",
+                    Description = """
+Do not alert on respectful questions, requests for clarification, quoting another position for discussion, asking what Catholics believe, comparing traditions in good faith, or imperfect wording where the user is plainly seeking understanding rather than asserting error.
+CCC References: CCC 30, CCC 851, CCC 1785
+Catechism Quote: "Man is by nature and vocation a religious being."
+""",
+                    Examples = new[]
                     {
-                        "Why do Catholics believe the Eucharist is really Jesus and not symbolic?",
-                        "Protestants say confession to a priest is unbiblical. How would a Catholic answer that?",
-                        "I disagree but I am trying to understand what the Catechism teaches on baptism.",
-                        "Can someone explain why Catholics ask saints to pray for them?"
+                        "Why do Catholics believe in the Real Presence?",
+                        "Can someone explain confession to me?",
+                        "Protestants say the Eucharist is symbolic; how would Catholics answer that?"
                     }
                 },
                 new()
                 {
-                    Name = "Denial of the Trinity or Christ's Divinity (CCC 232-267, 464)",
-                    Description = "Alert when a message clearly asserts that the Trinity is false, that Jesus is not truly God, that the Son is a creature only, or that the Holy Spirit is not divine. Do not alert when someone is asking a question or quoting another view for discussion. Relevant CCC references: 232-267, 202, 253, 454, 464.",
-                    Examples = new List<string>
+                    Name = "Denial of the Trinity",
+                    Description = """
+Flag messages that clearly deny the Trinity, deny that God is Father, Son, and Holy Spirit, or teach that the Son or the Holy Spirit are merely creatures rather than truly God.
+CCC References: CCC 232-267
+Catechism Quote: "The mystery of the Most Holy Trinity is the central mystery of Christian faith and life."
+""",
+                    Examples = new[]
                     {
-                        "Jesus is not God and the Trinity is a pagan invention.",
-                        "The Holy Spirit is not divine, just a force.",
-                        "Christ was only a created being, not equal to the Father."
+                        "The Trinity is a false doctrine.",
+                        "Jesus is not God, only a creature.",
+                        "The Holy Spirit is just a force, not God."
                     }
                 },
                 new()
                 {
-                    Name = "Denial of the Incarnation, Resurrection, or essential Creedal truths (CCC 422-682, 988-996)",
-                    Description = "Alert when a message clearly denies that the Word became flesh, that Jesus truly rose bodily from the dead, or rejects essential apostolic creed-level truths in a direct and assertive way. Relevant CCC references: 422-483, 638-658, 988-996.",
-                    Examples = new List<string>
+                    Name = "Denial of the Divinity of Christ",
+                    Description = """
+Flag messages that clearly deny that Jesus Christ is true God and true man, deny the Incarnation, or present Jesus as a merely human teacher.
+CCC References: CCC 456-483, CCC 464
+Catechism Quote: "The Word became flesh to save us by reconciling us with God."
+""",
+                    Examples = new[]
                     {
-                        "Jesus did not physically rise from the dead.",
-                        "The incarnation is just a metaphor.",
-                        "Christ was not truly born of the Virgin Mary."
+                        "Jesus was only a moral teacher.",
+                        "Christ was not really God in the flesh.",
+                        "The Incarnation never happened."
                     }
                 },
                 new()
                 {
-                    Name = "Denial of the Real Presence in the Eucharist (CCC 1323-1419)",
-                    Description = "Alert when a message clearly teaches that the Eucharist is only a symbol, that the Mass is merely symbolic worship, or that Christ is not truly present in the Eucharist. Do not alert on sincere requests for explanation or comparison. Relevant CCC references: 1323-1419, especially 1374, 1376, 1413.",
-                    Examples = new List<string>
+                    Name = "Denial of the Real Presence",
+                    Description = """
+Flag messages that clearly deny the Real Presence, teach that the Eucharist is only symbolic, or urge Catholics to reject the Church's teaching on the Eucharist.
+CCC References: CCC 1374, CCC 1376
+Catechism Quote: "In the most blessed sacrament of the Eucharist the body and blood, together with the soul and divinity, of our Lord Jesus Christ... is truly, really, and substantially contained."
+""",
+                    Examples = new[]
                     {
-                        "The Eucharist is only bread and wine and nothing more.",
-                        "Jesus is not really present in Communion, it is purely symbolic.",
-                        "The Mass is just a memorial meal and Catholics are wrong about the Real Presence."
+                        "The Eucharist is only a symbol.",
+                        "Jesus is not really present in Communion.",
+                        "Catholics are wrong to worship the Eucharist."
                     }
                 },
                 new()
                 {
-                    Name = "Denial of sacramental baptism or baptismal regeneration (CCC 1213-1284)",
-                    Description = "Alert when a message clearly teaches that baptism does nothing, is only an outward symbol, is never a means of grace, or directly rejects Catholic teaching that baptism truly unites us to Christ and remits sins. Do not alert on nuanced discussion about extraordinary cases or desire for baptism. Relevant CCC references: 1213, 1257, 1262-1270.",
-                    Examples = new List<string>
+                    Name = "Denial of Sacramental Confession",
+                    Description = """
+Flag messages that clearly deny the sacrament of Penance, reject priestly absolution as invalid, or urge Catholics to ignore Christ's gift of reconciliation through the Church.
+CCC References: CCC 1441-1449, CCC 1461
+Catechism Quote: "Since Christ entrusted to his apostles the ministry of reconciliation, bishops who are their successors, and priests, the bishops' collaborators, continue to exercise this ministry."
+""",
+                    Examples = new[]
                     {
-                        "Baptism is only a public symbol and never does anything spiritually.",
-                        "Baptism does not remit sins in any sense.",
-                        "Catholics are wrong to say baptism saves."
+                        "No priest can forgive sins.",
+                        "Confession to a priest is unbiblical and fake.",
+                        "Catholics should never go to confession."
                     }
                 },
                 new()
                 {
-                    Name = "Denial of confession and priestly absolution (CCC 1422-1498)",
-                    Description = "Alert when a message clearly teaches that sacramental confession is invalid, that priests have no authority to absolve sins, or that confession to a priest is anti-Christian. Do not alert on personal discomfort or good-faith questions. Relevant CCC references: 1422-1498, especially 1441-1442, 1461, 1495-1496.",
-                    Examples = new List<string>
+                    Name = "Denial of Baptismal Regeneration",
+                    Description = """
+Flag messages that clearly deny that baptism truly remits sins and gives new birth in Christ, or teach that sacramental baptism is only an empty symbol.
+CCC References: CCC 1213, CCC 1262-1270
+Catechism Quote: "Holy Baptism is the basis of the whole Christian life, the gateway to life in the Spirit."
+""",
+                    Examples = new[]
                     {
-                        "No priest can forgive sins and confession is a fake Catholic invention.",
-                        "Confession to a priest is invalid and should be rejected.",
-                        "Priestly absolution is blasphemy."
+                        "Baptism does nothing.",
+                        "Baptism is only an outward symbol.",
+                        "No one receives grace in baptism."
                     }
                 },
                 new()
                 {
-                    Name = "Rejection of the Church's teaching authority and apostolic succession (CCC 74-100, 857-896)",
-                    Description = "Alert when a message clearly teaches that Christ did not establish a visible teaching Church, that bishops and priests have no apostolic authority whatsoever, or that the Church has no authority to bind believers in doctrine. Do not alert on discussion of historical abuse, prudential criticism, or questions about authority. Relevant CCC references: 74-100, 85-87, 857-896.",
-                    Examples = new List<string>
+                    Name = "Explicit Heresy Against Defined Catholic Teaching",
+                    Description = """
+Flag messages that obstinately reject or mock truths the Catholic Church teaches must be believed with divine and Catholic faith. Use this for direct doctrinal rejection not covered more specifically by another rule.
+CCC References: CCC 2088-2089
+Catechism Quote: "Heresy is the obstinate post-baptismal denial of some truth which must be believed with divine and catholic faith."
+""",
+                    Examples = new[]
                     {
-                        "The Church has no authority to define doctrine for Christians.",
-                        "Apostolic succession is a fraud and bishops have no real authority.",
-                        "Every believer is his own final authority and the Church cannot teach binding truth."
-                    }
-                },
-                new()
-                {
-                    Name = "Anti-Catholic slander presented as fact (CCC 2112-2114, 971, 2132)",
-                    Description = "Alert when a message presents hostile falsehoods as fact against Catholicism, such as claiming Catholics worship idols, worship Mary, are not Christians, or that the Pope is the antichrist. Do not alert on respectful disagreement or when someone is asking whether such claims are true. Relevant CCC references: 971, 2112-2114, 2132, 830.",
-                    Examples = new List<string>
-                    {
-                        "Catholics worship idols and Mary.",
-                        "Catholics are not Christians.",
-                        "The Pope is the antichrist."
-                    }
-                },
-                new()
-                {
-                    Name = "Promotion of leaving the Church or rejecting the sacraments (CCC 846, 1129, 2042)",
-                    Description = "Alert when a message urges members to leave the Catholic Church, reject the sacraments, abandon confession, avoid the Mass, or turn others away from Catholic teaching in a direct promotional way. Relevant CCC references: 846, 1129, 1389, 2041-2043.",
-                    Examples = new List<string>
-                    {
-                        "Leave the Catholic Church and stop going to Mass.",
-                        "Do not confess to priests and reject Catholic sacraments.",
-                        "Catholics should abandon the Eucharist because it is false worship."
-                    }
-                },
-                new()
-                {
-                    Name = "Persistent catechism contradiction after correction (CCC 85-87, 2032-2040)",
-                    Description = "Alert when a user persistently and assertively keeps teaching against clearly defined Catholic doctrine after correction by moderators or catechetical explanation, especially if they continue pushing error as truth. This is for repeated doctrinal agitation, not one-off confusion. Relevant CCC references: 85-87, 94, 2032-2040.",
-                    Examples = new List<string>
-                    {
-                        "I was corrected already but I still say the Eucharist is only symbolic and Catholics need to stop teaching otherwise.",
-                        "I know what the Church says, and I am still here to teach people that confession is false and they must reject it.",
-                        "Even after being shown the Catechism, I will keep teaching that the Trinity is false."
+                        "Dogma means nothing and Catholics should reject it.",
+                        "The Church's defined doctrines are false and should be ignored.",
+                        "I reject any doctrine Rome says must be believed."
                     }
                 }
             }
