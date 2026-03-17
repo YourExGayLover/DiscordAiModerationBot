@@ -120,7 +120,12 @@ public sealed class BotService
                 .WithDescription("Import rules for this server from a JSON attachment")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption("file", ApplicationCommandOptionType.Attachment, "The exported JSON file", true)
-                .AddOption("replace-existing", ApplicationCommandOptionType.Boolean, "If true, remove existing rules before import", false));
+                .AddOption("replace-existing", ApplicationCommandOptionType.Boolean, "If true, remove existing rules before import", false))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("seed-catholic-heresy")
+                .WithDescription("Install the built-in Catholic heresy rule pack")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("replace-existing", ApplicationCommandOptionType.Boolean, "If true, remove existing rules before seeding", false));
 
         var reviewCommand = new SlashCommandBuilder()
             .WithName("review")
@@ -428,46 +433,72 @@ public sealed class BotService
                     return;
                 }
 
-                var validRules = importFile.Rules
-                    .Where(r => !string.IsNullOrWhiteSpace(r.Name) && !string.IsNullOrWhiteSpace(r.Description))
-                    .GroupBy(r => r.Name.Trim(), StringComparer.OrdinalIgnoreCase)
-                    .Select(g => g.First())
-                    .ToList();
+                var importedCount = await UpsertImportedRulesAsync(guildId, importFile.Rules, replaceExisting);
 
-                if (validRules.Count == 0)
+                if (importedCount == 0)
                 {
                     await command.FollowupAsync("No valid rules were found in the file.", ephemeral: true);
                     return;
                 }
 
-                if (replaceExisting)
-                    await _database.RemoveAllRulesAsync(guildId);
-
-                foreach (var rule in validRules)
-                {
-                    await _database.UpsertRuleAsync(new RuleRecord
-                    {
-                        GuildId = guildId,
-                        Name = rule.Name.Trim(),
-                        Description = rule.Description.Trim(),
-                        ExamplesJson = JsonSerializer.Serialize(
-                            (rule.Examples ?? new List<string>())
-                            .Where(x => !string.IsNullOrWhiteSpace(x))
-                            .Select(x => x.Trim())
-                            .Distinct(StringComparer.OrdinalIgnoreCase)
-                            .ToArray())
-                    });
-                }
-
                 await command.FollowupAsync(
                     replaceExisting
-                        ? $"Imported {validRules.Count} rule(s) and replaced existing rules."
-                        : $"Imported {validRules.Count} rule(s). Existing rules with matching names were updated.",
+                        ? $"Imported {importedCount} rule(s) and replaced existing rules."
+                        : $"Imported {importedCount} rule(s). Existing rules with matching names were updated.",
+                    ephemeral: true);
+
+                break;
+            }
+
+            case "seed-catholic-heresy":
+            {
+                var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
+                var pack = CatholicRulePack.Create(guildId);
+                var importedCount = await UpsertImportedRulesAsync(guildId, pack.Rules, replaceExisting);
+
+                await command.RespondAsync(
+                    replaceExisting
+                        ? $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s) and replaced existing rules."
+                        : $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s). Existing rules with matching names were updated.",
                     ephemeral: true);
 
                 break;
             }
         }
+    }
+
+
+    private async Task<int> UpsertImportedRulesAsync(long guildId, IEnumerable<RuleImportItem> rules, bool replaceExisting)
+    {
+        var validRules = rules
+            .Where(r => !string.IsNullOrWhiteSpace(r.Name) && !string.IsNullOrWhiteSpace(r.Description))
+            .GroupBy(r => r.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
+        if (validRules.Count == 0)
+            return 0;
+
+        if (replaceExisting)
+            await _database.RemoveAllRulesAsync(guildId);
+
+        foreach (var rule in validRules)
+        {
+            await _database.UpsertRuleAsync(new RuleRecord
+            {
+                GuildId = guildId,
+                Name = rule.Name.Trim(),
+                Description = rule.Description.Trim(),
+                ExamplesJson = JsonSerializer.Serialize(
+                    (rule.Examples ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray())
+            });
+        }
+
+        return validRules.Count;
     }
 
     private async Task HandleReviewAsync(SocketSlashCommand command, long guildId)
