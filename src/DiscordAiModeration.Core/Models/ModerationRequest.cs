@@ -10,4 +10,5 @@ public sealed class ModerationRequest
     public string ChannelMention { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public DateTime CreatedUtc { get; set; }
+    public IReadOnlyList<ModerationContextMessage> RecentContext { get; set; } = Array.Empty<ModerationContextMessage>();
 }

@@ -11,6 +11,8 @@ namespace DiscordAiModeration.Bot.Services;
 
 public sealed class BotService
 {
+    private const int ContextMessageCount = 8;
+
     private readonly DiscordSocketClient _discordClient;
     private readonly IDatabase _database;
     private readonly ModerationQueue _moderationQueue;
@@ -30,7 +32,6 @@ public sealed class BotService
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
-
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await _database.InitializeAsync(cancellationToken);
@@ -47,11 +48,12 @@ public sealed class BotService
 
         var token = Environment.GetEnvironmentVariable("DISCORD_BOT_TOKEN");
         if (string.IsNullOrWhiteSpace(token))
+        {
             throw new InvalidOperationException("Missing required environment variable: DISCORD_BOT_TOKEN");
+        }
 
         await _discordClient.LoginAsync(TokenType.Bot, token);
         await _discordClient.StartAsync();
-
         _ = Task.Run(() => _moderationQueue.RunAsync(cancellationToken), cancellationToken);
     }
 
@@ -185,18 +187,33 @@ public sealed class BotService
     private async Task OnMessageReceivedAsync(SocketMessage socketMessage)
     {
         if (socketMessage is not SocketUserMessage message)
+        {
             return;
+        }
+
         if (message.Author.IsBot)
+        {
             return;
+        }
+
         if (message.Channel is not SocketGuildChannel guildChannel)
+        {
             return;
+        }
+
         if (string.IsNullOrWhiteSpace(message.Content))
+        {
             return;
+        }
 
         var guildId = (long)guildChannel.Guild.Id;
         var settings = await _database.GetGuildSettingsAsync(guildId);
         if (settings is null || !settings.AiEnabled)
+        {
             return;
+        }
+
+        var recentContext = await LoadRecentContextAsync(message, ContextMessageCount);
 
         await _moderationQueue.EnqueueAsync(new ModerationRequest
         {
@@ -205,12 +222,63 @@ public sealed class BotService
             MessageId = (long)message.Id,
             UserId = (long)message.Author.Id,
             Username = message.Author.Mention,
-            ChannelMention = message.Channel is SocketTextChannel textChannel
-                ? textChannel.Mention
-                : $"<#{message.Channel.Id}>",
+            ChannelMention = message.Channel is SocketTextChannel textChannel ? textChannel.Mention : $"<#{message.Channel.Id}>",
             Content = message.Content,
-            CreatedUtc = DateTime.UtcNow
+            CreatedUtc = DateTime.UtcNow,
+            RecentContext = recentContext
         });
+    }
+
+    private async Task<IReadOnlyList<ModerationContextMessage>> LoadRecentContextAsync(SocketUserMessage targetMessage, int limit)
+    {
+        try
+        {
+            var messages = await targetMessage.Channel
+                .GetMessagesAsync(limit + 1)
+                .FlattenAsync();
+
+            return messages
+                .Where(m => m.Id != targetMessage.Id)
+                .Where(m => !m.Author.IsBot)
+                .Where(m => !string.IsNullOrWhiteSpace(m.Content))
+                .OrderBy(m => m.Timestamp)
+                .TakeLast(limit)
+                .Select(m => new ModerationContextMessage
+                {
+                    MessageId = (long)m.Id,
+                    UserId = (long)m.Author.Id,
+                    AuthorDisplay = BuildAuthorDisplay(m.Author),
+                    Content = NormalizeContextContent(m.Content),
+                    IsCurrentUser = m.Author.Id == targetMessage.Author.Id
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to load recent context for message {MessageId} in channel {ChannelId}",
+                targetMessage.Id,
+                targetMessage.Channel.Id);
+
+            return Array.Empty<ModerationContextMessage>();
+        }
+    }
+
+    private static string BuildAuthorDisplay(IUser author)
+    {
+        if (!string.IsNullOrWhiteSpace(author.GlobalName))
+        {
+            return author.GlobalName;
+        }
+
+        return author.Username;
+    }
+
+    private static string NormalizeContextContent(string content)
+    {
+        var normalized = content.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return normalized.Length <= 400 ? normalized : normalized[..400] + "...";
     }
 
     private async Task OnSlashCommandExecutedAsync(SocketSlashCommand command)
@@ -247,9 +315,13 @@ public sealed class BotService
         {
             _logger.LogError(ex, "Slash command processing error");
             if (!command.HasResponded)
+            {
                 await command.RespondAsync($"Error: {ex.Message}", ephemeral: true);
+            }
             else
+            {
                 await command.FollowupAsync($"Error: {ex.Message}", ephemeral: true);
+            }
         }
     }
 
@@ -289,7 +361,7 @@ public sealed class BotService
                 var enabled = Convert.ToBoolean(subCommand.Options.First().Value);
                 settings.AiEnabled = enabled;
                 await _database.UpsertGuildSettingsAsync(settings);
-                await command.RespondAsync($"AI moderation {(enabled ? "enabled" : "disabled") }.", ephemeral: true);
+                await command.RespondAsync($"AI moderation {(enabled ? "enabled" : "disabled")}.", ephemeral: true);
                 break;
             }
             case "toggle-simple-prompts":
@@ -299,8 +371,8 @@ public sealed class BotService
                 await _database.UpsertGuildSettingsAsync(settings);
                 await command.RespondAsync(
                     enabled
-                        ? "Simple prompts enabled. The bot will use a shorter, cheaper moderation request."
-                        : "Simple prompts disabled. The bot will use the full moderation request.",
+                        ? "Simple prompts enabled.\nThe bot will use a shorter, cheaper moderation request."
+                        : "Simple prompts disabled.\nThe bot will use the full moderation request.",
                     ephemeral: true);
                 break;
             }
@@ -318,7 +390,6 @@ public sealed class BotService
                 var name = (string)subCommand.Options.First(x => x.Name == "name").Value!;
                 var description = (string)subCommand.Options.First(x => x.Name == "description").Value!;
                 var rawExamples = subCommand.Options.FirstOrDefault(x => x.Name == "examples")?.Value as string;
-
                 var examples = string.IsNullOrWhiteSpace(rawExamples)
                     ? Array.Empty<string>()
                     : rawExamples.Split("||", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -334,7 +405,6 @@ public sealed class BotService
                 await command.RespondAsync($"Saved rule **{name}**.", ephemeral: true);
                 break;
             }
-
             case "list":
             {
                 var rules = await _database.ListRulesAsync(guildId);
@@ -346,18 +416,20 @@ public sealed class BotService
 
                 var content = string.Join("\n\n", rules.Select(r => $"**{r.Name}**\n{r.Description}"));
                 var chunks = Chunk(content, 1900).ToList();
-
                 for (var i = 0; i < chunks.Count; i++)
                 {
                     if (i == 0)
+                    {
                         await command.RespondAsync(chunks[i], ephemeral: true);
+                    }
                     else
+                    {
                         await command.FollowupAsync(chunks[i], ephemeral: true);
+                    }
                 }
 
                 break;
             }
-
             case "remove":
             {
                 var name = (string)subCommand.Options.First(x => x.Name == "name").Value!;
@@ -367,11 +439,9 @@ public sealed class BotService
                     ephemeral: true);
                 break;
             }
-
             case "export":
             {
                 var rules = await _database.ListRulesAsync(guildId);
-
                 var export = new RulesExportFile
                 {
                     GuildId = guildId,
@@ -384,27 +454,19 @@ public sealed class BotService
                     }).ToList()
                 };
 
-                var json = JsonSerializer.Serialize(export, new JsonSerializerOptions
-                {
-                    WriteIndented = true
-                });
-
+                var json = JsonSerializer.Serialize(export, new JsonSerializerOptions { WriteIndented = true });
                 var bytes = Encoding.UTF8.GetBytes(json);
                 await using var stream = new MemoryStream(bytes);
                 var attachment = new FileAttachment(stream, $"rules-{guildId}-{DateTime.UtcNow:yyyyMMddHHmmss}.json");
-
                 await command.RespondWithFileAsync(
                     attachment,
                     text: $"Exported {export.Rules.Count} rule(s).",
                     ephemeral: true);
-
                 break;
             }
-
             case "import":
             {
                 await command.DeferAsync(ephemeral: true);
-
                 var attachmentOption = subCommand.Options.First(x => x.Name == "file");
                 var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
                 var attachment = (IAttachment)attachmentOption.Value!;
@@ -417,7 +479,6 @@ public sealed class BotService
 
                 var client = _httpClientFactory.CreateClient();
                 var json = await client.GetStringAsync(attachment.Url);
-
                 RulesExportFile? importFile;
                 try
                 {
@@ -439,7 +500,6 @@ public sealed class BotService
                 }
 
                 var importedCount = await UpsertImportedRulesAsync(guildId, importFile.Rules, replaceExisting);
-
                 if (importedCount == 0)
                 {
                     await command.FollowupAsync("No valid rules were found in the file.", ephemeral: true);
@@ -449,44 +509,36 @@ public sealed class BotService
                 await command.FollowupAsync(
                     replaceExisting
                         ? $"Imported {importedCount} rule(s) and replaced existing rules."
-                        : $"Imported {importedCount} rule(s). Existing rules with matching names were updated.",
+                        : $"Imported {importedCount} rule(s).\nExisting rules with matching names were updated.",
                     ephemeral: true);
-
                 break;
             }
-
             case "seed-catholic-heresy":
             {
                 var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
                 var pack = CatholicRulePack.Create(guildId);
                 var importedCount = await UpsertImportedRulesAsync(guildId, pack.Rules, replaceExisting);
-
                 await command.RespondAsync(
                     replaceExisting
                         ? $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s) and replaced existing rules."
-                        : $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s). Existing rules with matching names were updated.",
+                        : $"Seeded **{CatholicRulePack.PackName}** with {importedCount} rule(s).\nExisting rules with matching names were updated.",
                     ephemeral: true);
-
                 break;
             }
-
             case "seed-catholic-morality":
             {
                 var replaceExisting = (subCommand.Options.FirstOrDefault(x => x.Name == "replace-existing")?.Value as bool?) ?? false;
                 var pack = CatholicMoralityRulePack.Create(guildId);
                 var importedCount = await UpsertImportedRulesAsync(guildId, pack.Rules, replaceExisting);
-
                 await command.RespondAsync(
                     replaceExisting
                         ? $"Seeded **{CatholicMoralityRulePack.PackName}** with {importedCount} rule(s) and replaced existing rules."
-                        : $"Seeded **{CatholicMoralityRulePack.PackName}** with {importedCount} rule(s). Existing rules with matching names were updated.",
+                        : $"Seeded **{CatholicMoralityRulePack.PackName}** with {importedCount} rule(s).\nExisting rules with matching names were updated.",
                     ephemeral: true);
-
                 break;
             }
         }
     }
-
 
     private async Task<int> UpsertImportedRulesAsync(long guildId, IEnumerable<RuleImportItem> rules, bool replaceExisting)
     {
@@ -497,10 +549,14 @@ public sealed class BotService
             .ToList();
 
         if (validRules.Count == 0)
+        {
             return 0;
+        }
 
         if (replaceExisting)
+        {
             await _database.RemoveAllRulesAsync(guildId);
+        }
 
         foreach (var rule in validRules)
         {
@@ -563,7 +619,6 @@ public sealed class BotService
     private async Task HandleRolesAsync(SocketSlashCommand command, long guildId)
     {
         var subCommand = command.Data.Options.First();
-
         switch (subCommand.Name)
         {
             case "audit-exactly-one":
@@ -602,7 +657,9 @@ public sealed class BotService
 
         var allUsers = new List<IGuildUser>();
         await foreach (var batch in guild.GetUsersAsync())
+        {
             allUsers.AddRange(batch);
+        }
 
         var selectedRoleIds = selectedRoles.Select(role => role.Id).ToHashSet();
         var violations = new List<string>();
@@ -620,16 +677,22 @@ public sealed class BotService
                 .ToList();
 
             if (matchedRoles.Count == 1)
+            {
                 continue;
+            }
 
             var label = matchedRoles.Count == 0
                 ? "No selected roles"
                 : $"Multiple selected roles ({matchedRoles.Count}): {string.Join(", ", matchedRoles)}";
 
             if (matchedRoles.Count == 0)
+            {
                 noRoleCount++;
+            }
             else
+            {
                 multipleRoleCount++;
+            }
 
             violations.Add($"{user.Mention} - {user.Username}#{user.Discriminator} - {label}");
         }
@@ -640,7 +703,7 @@ public sealed class BotService
         if (violations.Count == 0)
         {
             await command.FollowupAsync(
-                $"Checked {allUsers.Count(user => includeBots || !user.IsBot)} {audience}. Every checked account has exactly one of these roles: {roleSummary}",
+                $"Checked {allUsers.Count(user => includeBots || !user.IsBot)} {audience}.\nEvery checked account has exactly one of these roles: {roleSummary}",
                 ephemeral: true);
             return;
         }
@@ -657,13 +720,9 @@ public sealed class BotService
 
         var outputLines = headerLines.Concat(violations).ToList();
         var chunks = ChunkLines(outputLines, 1900).ToList();
-
         for (var i = 0; i < chunks.Count; i++)
         {
-            if (i == 0)
-                await command.FollowupAsync(chunks[i], ephemeral: true);
-            else
-                await command.FollowupAsync(chunks[i], ephemeral: true);
+            await command.FollowupAsync(chunks[i], ephemeral: true);
         }
     }
 
@@ -691,7 +750,9 @@ public sealed class BotService
     private static List<string> DeserializeExamples(string? examplesJson)
     {
         if (string.IsNullOrWhiteSpace(examplesJson))
+        {
             return new List<string>();
+        }
 
         try
         {
@@ -703,12 +764,15 @@ public sealed class BotService
         }
     }
 
-    private static string Trim(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength] + "...";
+    private static string Trim(string value, int maxLength) =>
+        value.Length <= maxLength ? value : value[..maxLength] + "...";
 
     private static IEnumerable<string> Chunk(string text, int maxLength)
     {
         for (var i = 0; i < text.Length; i += maxLength)
+        {
             yield return text.Substring(i, Math.Min(maxLength, text.Length - i));
+        }
     }
 
     private static IEnumerable<string> ChunkLines(IEnumerable<string> lines, int maxLength)
@@ -731,7 +795,10 @@ public sealed class BotService
             if (normalizedLine.Length > maxLength)
             {
                 foreach (var chunk in Chunk(normalizedLine, maxLength))
+                {
                     yield return chunk;
+                }
+
                 continue;
             }
 
@@ -740,6 +807,8 @@ public sealed class BotService
         }
 
         if (current.Count > 0)
+        {
             yield return string.Join(Environment.NewLine, current);
+        }
     }
 }
