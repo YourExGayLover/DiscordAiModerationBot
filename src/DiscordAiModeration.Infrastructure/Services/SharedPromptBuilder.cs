@@ -88,8 +88,9 @@ internal static class SharedPromptBuilder
                     var ruleName = GetStringProperty(e, "RuleName");
                     var outcome = GetStringProperty(e, "Outcome");
                     var messageContent = GetStringProperty(e, "MessageContent");
+                    var reason = GetStringProperty(e, "Reason");
                     var notes = GetStringProperty(e, "Notes");
-                    return $"Feedback Example {i + 1}\nRule: {ruleName}\nOutcome: {outcome}\nMessage: {messageContent}\nModerator notes: {notes}";
+                    return $"Feedback Example {i + 1}\nRule: {ruleName}\nOutcome: {outcome}\nMessage: {messageContent}\nModerator reason: {reason}\nModerator notes: {notes}";
                 }));
 
         return $"""

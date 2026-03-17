@@ -54,6 +54,8 @@ public sealed class SqliteDatabase : IDatabase
                       MessageContent TEXT NOT NULL,
                       FeedbackStatus TEXT NOT NULL DEFAULT 'pending',
                       FeedbackNotes TEXT NULL,
+                      OverrideRuleName TEXT NULL,
+                      OverrideReason TEXT NULL,
                       ReviewedByUserId INTEGER NULL,
                       CreatedUtc TEXT NOT NULL
                   );
@@ -64,6 +66,8 @@ public sealed class SqliteDatabase : IDatabase
         await command.ExecuteNonQueryAsync(cancellationToken);
 
         await EnsureColumnAsync(connection, "GuildSettings", "UseSimplePrompts", "ALTER TABLE GuildSettings ADD COLUMN UseSimplePrompts INTEGER NOT NULL DEFAULT 0;", cancellationToken);
+        await EnsureColumnAsync(connection, "Alerts", "OverrideRuleName", "ALTER TABLE Alerts ADD COLUMN OverrideRuleName TEXT NULL;", cancellationToken);
+        await EnsureColumnAsync(connection, "Alerts", "OverrideReason", "ALTER TABLE Alerts ADD COLUMN OverrideReason TEXT NULL;", cancellationToken);
     }
 
     public async Task<GuildSettings?> GetGuildSettingsAsync(long guildId, CancellationToken cancellationToken = default)
@@ -198,8 +202,8 @@ public sealed class SqliteDatabase : IDatabase
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-                              INSERT INTO Alerts (GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, CreatedUtc)
-                              VALUES ($guildId, $messageId, $channelId, $userId, $ruleName, $confidence, $reason, $messageContent, $feedbackStatus, $createdUtc);
+                              INSERT INTO Alerts (GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, OverrideRuleName, OverrideReason, CreatedUtc)
+                              VALUES ($guildId, $messageId, $channelId, $userId, $ruleName, $confidence, $reason, $messageContent, $feedbackStatus, $overrideRuleName, $overrideReason, $createdUtc);
                               SELECT last_insert_rowid();
                               """;
 
@@ -212,13 +216,42 @@ public sealed class SqliteDatabase : IDatabase
         command.Parameters.AddWithValue("$reason", (object?)alert.Reason ?? DBNull.Value);
         command.Parameters.AddWithValue("$messageContent", alert.MessageContent);
         command.Parameters.AddWithValue("$feedbackStatus", alert.FeedbackStatus);
+        command.Parameters.AddWithValue("$overrideRuleName", (object?)alert.OverrideRuleName ?? DBNull.Value);
+        command.Parameters.AddWithValue("$overrideReason", (object?)alert.OverrideReason ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdUtc", alert.CreatedUtc.ToString("O"));
 
         var result = await command.ExecuteScalarAsync(cancellationToken);
         return Convert.ToInt64(result);
     }
 
-    public async Task<bool> SetAlertFeedbackAsync(long alertId, long guildId, string status, string? notes, ulong reviewerUserId, CancellationToken cancellationToken = default)
+    public async Task<AlertRecord?> GetAlertAsync(long alertId, long guildId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT Id, GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, FeedbackNotes, OverrideRuleName, OverrideReason, ReviewedByUserId, CreatedUtc FROM Alerts WHERE Id=$alertId AND GuildId=$guildId LIMIT 1";
+        command.Parameters.AddWithValue("$alertId", alertId);
+        command.Parameters.AddWithValue("$guildId", guildId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return ReadAlertRecord(reader);
+    }
+
+    public async Task<bool> SetAlertFeedbackAsync(
+        long alertId,
+        long guildId,
+        string status,
+        string? notes,
+        ulong reviewerUserId,
+        string? overrideRuleName = null,
+        string? overrideReason = null,
+        CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -228,12 +261,16 @@ public sealed class SqliteDatabase : IDatabase
                               UPDATE Alerts
                               SET FeedbackStatus=$status,
                                   FeedbackNotes=$notes,
+                                  OverrideRuleName=$overrideRuleName,
+                                  OverrideReason=$overrideReason,
                                   ReviewedByUserId=$reviewedByUserId
                               WHERE Id=$alertId AND GuildId=$guildId;
                               """;
 
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$notes", (object?)notes ?? DBNull.Value);
+        command.Parameters.AddWithValue("$overrideRuleName", (object?)overrideRuleName ?? DBNull.Value);
+        command.Parameters.AddWithValue("$overrideReason", (object?)overrideReason ?? DBNull.Value);
         command.Parameters.AddWithValue("$reviewedByUserId", (long)reviewerUserId);
         command.Parameters.AddWithValue("$alertId", alertId);
         command.Parameters.AddWithValue("$guildId", guildId);
@@ -250,8 +287,8 @@ public sealed class SqliteDatabase : IDatabase
 
         await using var command = connection.CreateCommand();
         command.CommandText = status.Equals("all", StringComparison.OrdinalIgnoreCase)
-            ? "SELECT Id, GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, FeedbackNotes, ReviewedByUserId, CreatedUtc FROM Alerts WHERE GuildId=$guildId ORDER BY Id DESC LIMIT $limit"
-            : "SELECT Id, GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, FeedbackNotes, ReviewedByUserId, CreatedUtc FROM Alerts WHERE GuildId=$guildId AND FeedbackStatus=$status ORDER BY Id DESC LIMIT $limit";
+            ? "SELECT Id, GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, FeedbackNotes, OverrideRuleName, OverrideReason, ReviewedByUserId, CreatedUtc FROM Alerts WHERE GuildId=$guildId ORDER BY Id DESC LIMIT $limit"
+            : "SELECT Id, GuildId, MessageId, ChannelId, UserId, RuleName, Confidence, Reason, MessageContent, FeedbackStatus, FeedbackNotes, OverrideRuleName, OverrideReason, ReviewedByUserId, CreatedUtc FROM Alerts WHERE GuildId=$guildId AND FeedbackStatus=$status ORDER BY Id DESC LIMIT $limit";
 
         command.Parameters.AddWithValue("$guildId", guildId);
         command.Parameters.AddWithValue("$limit", limit);
@@ -261,22 +298,7 @@ public sealed class SqliteDatabase : IDatabase
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            alerts.Add(new AlertRecord
-            {
-                Id = reader.GetInt64(0),
-                GuildId = reader.GetInt64(1),
-                MessageId = reader.GetInt64(2),
-                ChannelId = reader.GetInt64(3),
-                UserId = reader.GetInt64(4),
-                RuleName = reader.GetString(5),
-                Confidence = reader.GetInt32(6),
-                Reason = reader.IsDBNull(7) ? null : reader.GetString(7),
-                MessageContent = reader.GetString(8),
-                FeedbackStatus = reader.GetString(9),
-                FeedbackNotes = reader.IsDBNull(10) ? null : reader.GetString(10),
-                ReviewedByUserId = reader.IsDBNull(11) ? null : reader.GetInt64(11),
-                CreatedUtc = DateTime.Parse(reader.GetString(12)).ToUniversalTime()
-            });
+            alerts.Add(ReadAlertRecord(reader));
         }
 
         return alerts;
@@ -291,7 +313,7 @@ public sealed class SqliteDatabase : IDatabase
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-                              SELECT RuleName, MessageContent, FeedbackStatus, FeedbackNotes
+                              SELECT COALESCE(NULLIF(OverrideRuleName, ''), RuleName), MessageContent, FeedbackStatus, COALESCE(NULLIF(OverrideReason, ''), Reason), FeedbackNotes
                               FROM Alerts
                               WHERE GuildId=$guildId AND FeedbackStatus IN ('approved', 'rejected')
                               ORDER BY Id DESC
@@ -309,11 +331,34 @@ public sealed class SqliteDatabase : IDatabase
                 RuleName = reader.GetString(0),
                 MessageContent = reader.GetString(1),
                 Outcome = reader.GetString(2),
-                Notes = reader.IsDBNull(3) ? null : reader.GetString(3)
+                Reason = reader.IsDBNull(3) ? null : reader.GetString(3),
+                Notes = reader.IsDBNull(4) ? null : reader.GetString(4)
             });
         }
 
         return examples;
+    }
+
+    private static AlertRecord ReadAlertRecord(SqliteDataReader reader)
+    {
+        return new AlertRecord
+        {
+            Id = reader.GetInt64(0),
+            GuildId = reader.GetInt64(1),
+            MessageId = reader.GetInt64(2),
+            ChannelId = reader.GetInt64(3),
+            UserId = reader.GetInt64(4),
+            RuleName = reader.GetString(5),
+            Confidence = reader.GetInt32(6),
+            Reason = reader.IsDBNull(7) ? null : reader.GetString(7),
+            MessageContent = reader.GetString(8),
+            FeedbackStatus = reader.GetString(9),
+            FeedbackNotes = reader.IsDBNull(10) ? null : reader.GetString(10),
+            OverrideRuleName = reader.IsDBNull(11) ? null : reader.GetString(11),
+            OverrideReason = reader.IsDBNull(12) ? null : reader.GetString(12),
+            ReviewedByUserId = reader.IsDBNull(13) ? null : reader.GetInt64(13),
+            CreatedUtc = DateTime.Parse(reader.GetString(14)).ToUniversalTime()
+        };
     }
 
     private static async Task EnsureColumnAsync(

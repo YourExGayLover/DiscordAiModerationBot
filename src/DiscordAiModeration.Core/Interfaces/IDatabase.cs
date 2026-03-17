@@ -16,8 +16,17 @@ public interface IDatabase
     Task<bool> RemoveRuleAsync(long guildId, string name, CancellationToken cancellationToken = default);
     Task<int> RemoveAllRulesAsync(long guildId, CancellationToken cancellationToken = default);
     Task<long> InsertAlertAsync(AlertRecord alert, CancellationToken cancellationToken = default);
+    Task<AlertRecord?> GetAlertAsync(long alertId, long guildId, CancellationToken cancellationToken = default);
 
-    Task<bool> SetAlertFeedbackAsync(long alertId, long guildId, string status, string? notes, ulong reviewerUserId, CancellationToken cancellationToken = default);
+    Task<bool> SetAlertFeedbackAsync(
+        long alertId,
+        long guildId,
+        string status,
+        string? notes,
+        ulong reviewerUserId,
+        string? overrideRuleName = null,
+        string? overrideReason = null,
+        CancellationToken cancellationToken = default);
 
     Task<List<AlertRecord>> ListAlertsAsync(long guildId, string status, int limit, CancellationToken cancellationToken = default);
     Task<List<FeedbackExample>> GetFeedbackExamplesAsync(long guildId, int limit, CancellationToken cancellationToken = default);

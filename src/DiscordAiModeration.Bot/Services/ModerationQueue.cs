@@ -218,6 +218,11 @@ public sealed class ModerationQueue
                 style: ButtonStyle.Success,
                 emote: new Emoji("✅"))
             .WithButton(
+                label: "Override Reason",
+                customId: $"review:override:{alertId}",
+                style: ButtonStyle.Primary,
+                emote: new Emoji("✏️"))
+            .WithButton(
                 label: "Dismiss",
                 customId: $"review:dismiss:{alertId}",
                 style: ButtonStyle.Secondary,

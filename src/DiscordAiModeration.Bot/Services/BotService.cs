@@ -152,6 +152,14 @@ public sealed class BotService
                 .AddOption("id", ApplicationCommandOptionType.Integer, "Alert id", true)
                 .AddOption("notes", ApplicationCommandOptionType.String, "Optional moderator notes", false))
             .AddOption(new SlashCommandOptionBuilder()
+                .WithName("override")
+                .WithDescription("Approve an alert but replace the rule and reason")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("id", ApplicationCommandOptionType.Integer, "Alert id", true)
+                .AddOption("rule", ApplicationCommandOptionType.String, "Correct rule name", true)
+                .AddOption("reason", ApplicationCommandOptionType.String, "Correct moderator reason", true)
+                .AddOption("notes", ApplicationCommandOptionType.String, "Optional moderator notes", false))
+            .AddOption(new SlashCommandOptionBuilder()
                 .WithName("list")
                 .WithDescription("List recent alerts")
                 .WithType(ApplicationCommandOptionType.SubCommand)
@@ -296,6 +304,12 @@ public sealed class BotService
             if (interaction is SocketMessageComponent component)
             {
                 await HandleMessageComponentAsync(component);
+                return;
+            }
+
+            if (interaction is SocketModal modal)
+            {
+                await HandleModalAsync(modal);
             }
         }
         catch (Exception ex)
@@ -311,6 +325,9 @@ public sealed class BotService
                         break;
                     case SocketSlashCommand slashCommand when !slashCommand.HasResponded:
                         await slashCommand.RespondAsync("Something went wrong handling that command.", ephemeral: true);
+                        break;
+                    case SocketModal modal when !modal.HasResponded:
+                        await modal.RespondAsync("Something went wrong handling that form.", ephemeral: true);
                         break;
                 }
             }
@@ -333,6 +350,37 @@ public sealed class BotService
         if (!TryParseReviewAction(customId, component.GuildId, out var action, out var guildId, out var alertId))
         {
             await component.RespondAsync("Unknown review action.", ephemeral: true);
+            return;
+        }
+
+        if (action.Equals("override", StringComparison.OrdinalIgnoreCase))
+        {
+            var modal = new ModalBuilder()
+                .WithTitle($"Override alert #{alertId}")
+                .WithCustomId($"review-override:{guildId}:{alertId}")
+                .AddTextInput(
+                    label: "Correct rule name",
+                    customId: "rule",
+                    style: TextInputStyle.Short,
+                    placeholder: "Enter the correct rule name",
+                    required: true,
+                    maxLength: 100)
+                .AddTextInput(
+                    label: "Correct reason",
+                    customId: "reason",
+                    style: TextInputStyle.Paragraph,
+                    placeholder: "Explain the correct reason for approving this alert",
+                    required: true,
+                    maxLength: 1000)
+                .AddTextInput(
+                    label: "Moderator notes (optional)",
+                    customId: "notes",
+                    style: TextInputStyle.Paragraph,
+                    placeholder: "Optional extra notes",
+                    required: false,
+                    maxLength: 1000);
+
+            await component.RespondWithModalAsync(modal.Build());
             return;
         }
 
@@ -378,6 +426,79 @@ public sealed class BotService
         }
     }
 
+    private async Task HandleModalAsync(SocketModal modal)
+    {
+        var customId = modal.Data.CustomId ?? string.Empty;
+        if (!TryParseOverrideModal(customId, modal.GuildId, out var guildId, out var alertId))
+        {
+            await modal.RespondAsync("Unknown review form.", ephemeral: true);
+            return;
+        }
+
+        var fields = modal.Data.Components.ToDictionary(x => x.CustomId, x => x.Value?.Trim() ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+        var ruleName = fields.GetValueOrDefault("rule", string.Empty);
+        var reason = fields.GetValueOrDefault("reason", string.Empty);
+        var notes = fields.GetValueOrDefault("notes", string.Empty);
+
+        if (string.IsNullOrWhiteSpace(ruleName) || string.IsNullOrWhiteSpace(reason))
+        {
+            await modal.RespondAsync("A corrected rule and corrected reason are required.", ephemeral: true);
+            return;
+        }
+
+        var updated = await _database.SetAlertFeedbackAsync(
+            alertId,
+            guildId,
+            "approved",
+            string.IsNullOrWhiteSpace(notes) ? null : notes,
+            modal.User.Id,
+            ruleName,
+            reason);
+
+        if (!updated)
+        {
+            await modal.RespondAsync($"Alert #{alertId} was not found.", ephemeral: true);
+            return;
+        }
+
+        await modal.RespondAsync($"Alert #{alertId} approved with corrected rule and reason.", ephemeral: true);
+
+    }
+
+    private static bool TryParseOverrideModal(
+        string customId,
+        ulong? interactionGuildId,
+        out long guildId,
+        out long alertId)
+    {
+        guildId = 0;
+        alertId = 0;
+
+        if (string.IsNullOrWhiteSpace(customId))
+        {
+            return false;
+        }
+
+        var parts = customId.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 2 || !parts[0].Equals("review-override", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (parts.Length == 2)
+        {
+            if (interactionGuildId is null || !long.TryParse(parts[1], out alertId))
+            {
+                return false;
+            }
+
+            guildId = (long)interactionGuildId.Value;
+            return true;
+        }
+
+        return long.TryParse(parts[1], out guildId) && long.TryParse(parts[2], out alertId);
+    }
+
     private static bool TryParseReviewAction(
         string customId,
         ulong? interactionGuildId,
@@ -405,7 +526,8 @@ public sealed class BotService
 
         if (!action.Equals("approve", StringComparison.OrdinalIgnoreCase) &&
             !action.Equals("dismiss", StringComparison.OrdinalIgnoreCase) &&
-            !action.Equals("reject", StringComparison.OrdinalIgnoreCase))
+            !action.Equals("reject", StringComparison.OrdinalIgnoreCase) &&
+            !action.Equals("override", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -746,6 +868,16 @@ public sealed class BotService
                     var notes = subCommand.Options.FirstOrDefault(x => x.Name == "notes")?.Value as string;
                     var updated = await _database.SetAlertFeedbackAsync(alertId, guildId, "rejected", notes, command.User.Id);
                     await command.RespondAsync(updated ? $"Alert #{alertId} marked rejected." : $"Alert #{alertId} not found.", ephemeral: true);
+                    break;
+                }
+            case "override":
+                {
+                    var alertId = Convert.ToInt64(subCommand.Options.First(x => x.Name == "id").Value);
+                    var ruleName = (string)subCommand.Options.First(x => x.Name == "rule").Value!;
+                    var reason = (string)subCommand.Options.First(x => x.Name == "reason").Value!;
+                    var notes = subCommand.Options.FirstOrDefault(x => x.Name == "notes")?.Value as string;
+                    var updated = await _database.SetAlertFeedbackAsync(alertId, guildId, "approved", notes, command.User.Id, ruleName, reason);
+                    await command.RespondAsync(updated ? $"Alert #{alertId} approved with corrected rule and reason." : $"Alert #{alertId} not found.", ephemeral: true);
                     break;
                 }
             case "list":
