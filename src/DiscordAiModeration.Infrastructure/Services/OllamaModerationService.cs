@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using DiscordAiModeration.Core.Interfaces;
 using DiscordAiModeration.Core.Models;
 using DiscordAiModeration.Infrastructure.Options;
 using Microsoft.Extensions.Logging;
@@ -8,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordAiModeration.Infrastructure.Services;
 
-public sealed class OllamaModerationService
+public sealed class OllamaModerationService : IAiModerationService
 {
     private readonly HttpClient _httpClient;
     private readonly AiProviderOptions _options;
@@ -48,11 +49,25 @@ public sealed class OllamaModerationService
                 properties = new
                 {
                     shouldAlert = new { type = "boolean" },
+                    verdict = new { type = "string" },
                     ruleName = new { type = "string" },
+                    violated_rules = new { type = "array", items = new { type = "string" } },
                     confidence = new { type = "integer" },
-                    reason = new { type = "string" }
+                    reason = new { type = "string" },
+                    explanation = new { type = "string" },
+                    sources = new { type = "array", items = new { type = "string" } }
                 },
-                required = new[] { "shouldAlert", "ruleName", "confidence", "reason" },
+                required = new[]
+                {
+                    "shouldAlert",
+                    "verdict",
+                    "ruleName",
+                    "violated_rules",
+                    "confidence",
+                    "reason",
+                    "explanation",
+                    "sources"
+                },
                 additionalProperties = false
             },
             messages = new object[]
@@ -63,7 +78,6 @@ public sealed class OllamaModerationService
         };
 
         var payloadJson = JsonSerializer.Serialize(payload);
-
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/chat")
         {
             Content = new StringContent(payloadJson, Encoding.UTF8, "application/json")
@@ -79,8 +93,6 @@ public sealed class OllamaModerationService
             rules.Count,
             examples.Count);
 
-        _logger.LogDebug("Ollama request payload. TraceId={TraceId} Payload={Payload}", traceId, payloadJson);
-
         var stopwatch = Stopwatch.StartNew();
         using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
         stopwatch.Stop();
@@ -94,8 +106,6 @@ public sealed class OllamaModerationService
             stopwatch.ElapsedMilliseconds,
             body.Length);
 
-        _logger.LogDebug("Ollama raw response body. TraceId={TraceId} Body={Body}", traceId, body);
-
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning(
@@ -104,25 +114,21 @@ public sealed class OllamaModerationService
                 response.StatusCode,
                 body);
 
-            return new AiDecision(false, string.Empty, 0, "AI request failed.");
+            return AiDecision.NoAlert("AI request failed.");
         }
 
         try
         {
             using var doc = JsonDocument.Parse(body);
             var content = doc.RootElement.GetProperty("message").GetProperty("content").GetString() ?? "{}";
-            _logger.LogDebug("Ollama extracted output text. TraceId={TraceId} OutputText={OutputText}", traceId, content);
             return AiDecisionParser.ParseFromJson(content);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to parse Ollama response. TraceId={TraceId} Raw response: {Body}", traceId, body);
-            return new AiDecision(false, string.Empty, 0, "AI parsing failed.");
+            return AiDecision.NoAlert("AI parsing failed.");
         }
     }
 
-    private static string BuildTraceId(ModerationRequest request)
-    {
-        return $"g{request.GuildId}-m{request.MessageId}";
-    }
+    private static string BuildTraceId(ModerationRequest request) => $"g{request.GuildId}-m{request.MessageId}";
 }

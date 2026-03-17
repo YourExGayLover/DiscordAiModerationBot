@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using DiscordAiModeration.Core.Interfaces;
 using DiscordAiModeration.Core.Models;
 using DiscordAiModeration.Infrastructure.Options;
 using Microsoft.Extensions.Logging;
@@ -9,7 +10,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordAiModeration.Infrastructure.Services;
 
-public sealed class OpenAiModerationService
+public sealed class OpenAiModerationService : IAiModerationService
 {
     private readonly HttpClient _httpClient;
     private readonly AiProviderOptions _options;
@@ -78,11 +79,33 @@ public sealed class OpenAiModerationService
                         properties = new
                         {
                             shouldAlert = new { type = "boolean" },
+                            verdict = new { type = "string" },
                             ruleName = new { type = "string" },
+                            violated_rules = new
+                            {
+                                type = "array",
+                                items = new { type = "string" }
+                            },
                             confidence = new { type = "integer", minimum = 0, maximum = 100 },
-                            reason = new { type = "string" }
+                            reason = new { type = "string" },
+                            explanation = new { type = "string" },
+                            sources = new
+                            {
+                                type = "array",
+                                items = new { type = "string" }
+                            }
                         },
-                        required = new[] { "shouldAlert", "ruleName", "confidence", "reason" }
+                        required = new[]
+                        {
+                            "shouldAlert",
+                            "verdict",
+                            "ruleName",
+                            "violated_rules",
+                            "confidence",
+                            "reason",
+                            "explanation",
+                            "sources"
+                        }
                     }
                 }
             }
@@ -101,8 +124,6 @@ public sealed class OpenAiModerationService
             rules.Count,
             examples.Count);
 
-        _logger.LogDebug("OpenAI request payload. TraceId={TraceId} Payload={Payload}", traceId, payloadJson);
-
         var stopwatch = Stopwatch.StartNew();
         using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
         stopwatch.Stop();
@@ -116,8 +137,6 @@ public sealed class OpenAiModerationService
             stopwatch.ElapsedMilliseconds,
             body.Length);
 
-        _logger.LogDebug("OpenAI raw response body. TraceId={TraceId} Body={Body}", traceId, body);
-
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning(
@@ -126,25 +145,21 @@ public sealed class OpenAiModerationService
                 response.StatusCode,
                 body);
 
-            return new AiDecision(false, string.Empty, 0, "AI request failed.");
+            return AiDecision.NoAlert("AI request failed.");
         }
 
         try
         {
             using var doc = JsonDocument.Parse(body);
             var outputText = AiDecisionParser.ExtractOpenAiOutputText(doc.RootElement);
-            _logger.LogDebug("OpenAI extracted output text. TraceId={TraceId} OutputText={OutputText}", traceId, outputText);
             return AiDecisionParser.ParseFromJson(outputText);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to parse OpenAI response. TraceId={TraceId} Raw response: {Body}", traceId, body);
-            return new AiDecision(false, string.Empty, 0, "AI parsing failed.");
+            return AiDecision.NoAlert("AI parsing failed.");
         }
     }
 
-    private static string BuildTraceId(ModerationRequest request)
-    {
-        return $"g{request.GuildId}-m{request.MessageId}";
-    }
+    private static string BuildTraceId(ModerationRequest request) => $"g{request.GuildId}-m{request.MessageId}";
 }

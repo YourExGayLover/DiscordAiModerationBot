@@ -5,75 +5,84 @@ namespace DiscordAiModeration.Infrastructure.Services;
 
 internal static class SharedPromptBuilder
 {
-    public static string BuildSystemPrompt(GuildSettings settings)
-        => settings.UseSimplePrompts ? BuildSimpleSystemPrompt() : BuildDetailedSystemPrompt();
+    public static string BuildSystemPrompt(GuildSettings settings) =>
+        settings.UseSimplePrompts ? BuildSimpleSystemPrompt() : BuildDetailedSystemPrompt();
 
-    public static string BuildUserPrompt<TRule, TExample>(
+    public static string BuildUserPrompt(
         ModerationRequest request,
         GuildSettings settings,
-        IReadOnlyList<TRule> rules,
-        IReadOnlyList<TExample> examples)
-        => settings.UseSimplePrompts
+        IReadOnlyList<RuleRecord> rules,
+        IReadOnlyList<FeedbackExample> examples) =>
+        settings.UseSimplePrompts
             ? BuildSimpleUserPrompt(request, rules)
             : BuildDetailedUserPrompt(request, rules, examples);
 
     private static string BuildDetailedSystemPrompt() =>
         """
-        You are a Discord moderation classifier.
-        You must evaluate one message against the server's rules.
-        Be conservative. Only alert when the message itself is promoting, asserting, or urging a likely violation.
-        Respect any explicit exemption rules such as good-faith discussion, quotation for analysis, requests for clarification, or catechetical questions.
+        You are a Catholic Discord moderation classifier.
+        Evaluate exactly one message against the provided server rules.
+        Be conservative. Do not alert on sincere questions, quoting for analysis, requests for clarification, or neutral discussion when an exemption rule applies.
+        Return strict JSON only.
+
+        Required JSON schema:
+        {
+          "shouldAlert": true|false,
+          "verdict": "heresy" | "violation" | "clean",
+          "ruleName": "Exact rule name or empty string",
+          "violated_rules": ["Exact rule name"],
+          "confidence": 0-100,
+          "reason": "One short summary sentence",
+          "explanation": "1-3 short sentences explaining why the message matches the rule",
+          "sources": ["CCC 1374", "John 6:51-58"]
+        }
+
+        Rules:
+        - Pick exactly one best matching ruleName when shouldAlert is true.
+        - violated_rules should usually contain one item matching ruleName.
+        - Use verdict="heresy" when the message positively teaches or promotes doctrinal denial against a Catholic dogma or definitive teaching.
+        - Use verdict="violation" for other rule breaks that are not doctrinal heresy.
+        - Use verdict="clean" when the message should not alert.
+        - Confidence must reflect uncertainty honestly.
+        - explanation must explain why the message violates the rule, not merely restate the rule name.
+        - sources must only include citations grounded in the supplied rule text or universally standard Catholic references clearly relevant to the detected issue.
+        - Do not invent quotations.
+        - If the message is clean, return an empty ruleName, empty violated_rules, and empty sources.
+        """;
+
+    private static string BuildSimpleSystemPrompt() =>
+        """
+        You are a Catholic Discord moderation classifier.
+        Check one message against the provided server rules.
         Return strict JSON only.
 
         Schema:
         {
           "shouldAlert": true|false,
+          "verdict": "heresy" | "violation" | "clean",
           "ruleName": "Exact rule name or empty string",
+          "violated_rules": ["Exact rule name"],
           "confidence": 0-100,
-          "reason": "Brief reason"
+          "reason": "Short summary",
+          "explanation": "Short why statement",
+          "sources": ["CCC or Scripture references"]
         }
 
-        Rules:
-        - If the message clearly does not violate a rule, set shouldAlert to false and confidence low.
-        - Confidence must reflect uncertainty, not certainty theater.
-        - Pick exactly one best matching ruleName when shouldAlert is true.
-        - Do not punish curiosity, imperfect wording, or comparative theological discussion unless the user is clearly teaching against the provided rules.
-        - Use moderator feedback examples as guidance.
-        - When shouldAlert is true, the reason should be 1-3 short sentences.
-        - If the matched rule description includes a line beginning with "Catechism Quote:" or "CCC References:", include a short catechism quotation or citation in the reason.
-        - Do not invent a quote that is not supplied in the rule text. If no catechism quote is supplied, keep the reason concise and factual.
-        """;
-
-    private static string BuildSimpleSystemPrompt() =>
-        """
-        You are a Discord moderation classifier. Check one message against the provided server rules.
-        Be conservative. Do not alert on sincere questions or quoted views for discussion when an exemption rule applies.
-
-        Return strict JSON only using this schema:
-        { "shouldAlert": true|false, "ruleName": "Exact matching rule name or empty string", "confidence": 0-100, "reason": "Short reason" }
-
-        Keep the reason short.
+        Do not alert on sincere questions when an exemption applies.
         Pick one best rule only.
-        If the matched rule includes a catechism quote or CCC reference, include it in the reason.
-        Do not invent a quote that is not present in the rule text.
         """;
 
-    private static string BuildDetailedUserPrompt<TRule, TExample>(
+    private static string BuildDetailedUserPrompt(
         ModerationRequest request,
-        IReadOnlyList<TRule> rules,
-        IReadOnlyList<TExample> examples)
+        IReadOnlyList<RuleRecord> rules,
+        IReadOnlyList<FeedbackExample> examples)
     {
         var rulesText = string.Join(
             "\n\n",
             rules.Select((r, i) =>
             {
-                var examplesJson = GetStringProperty(r, "ExamplesJson");
-                var sampleExamples = DeserializeExamples(examplesJson);
+                var sampleExamples = DeserializeExamples(r.ExamplesJson);
                 var exampleText = sampleExamples.Length == 0 ? "None" : string.Join(" | ", sampleExamples);
-
-                var ruleName = GetStringProperty(r, "Name");
-                var description = GetStringProperty(r, "Description");
-                return $"Rule {i + 1}: {ruleName}\nDescription: {description}\nExamples: {exampleText}";
+                return $"Rule {i + 1}: {r.Name}\nDescription: {r.Description}\nExamples: {exampleText}";
             }));
 
         var feedbackText = examples.Count == 0
@@ -81,13 +90,7 @@ internal static class SharedPromptBuilder
             : string.Join(
                 "\n\n",
                 examples.Select((e, i) =>
-                {
-                    var ruleName = GetStringProperty(e, "RuleName");
-                    var outcome = GetStringProperty(e, "Outcome");
-                    var messageContent = GetStringProperty(e, "MessageContent");
-                    var notes = GetStringProperty(e, "Notes");
-                    return $"Feedback Example {i + 1}\nRule: {ruleName}\nOutcome: {outcome}\nMessage: {messageContent}\nModerator notes: {notes}";
-                }));
+                    $"Feedback Example {i + 1}\nRule: {e.RuleName}\nOutcome: {e.Outcome}\nMessage: {e.MessageContent}\nModerator notes: {e.Notes}"));
 
         return $"""
         Server rules:
@@ -103,18 +106,11 @@ internal static class SharedPromptBuilder
         """;
     }
 
-    private static string BuildSimpleUserPrompt<TRule>(
-        ModerationRequest request,
-        IReadOnlyList<TRule> rules)
+    private static string BuildSimpleUserPrompt(ModerationRequest request, IReadOnlyList<RuleRecord> rules)
     {
         var rulesText = string.Join(
             "\n",
-            rules.Select((r, i) =>
-            {
-                var ruleName = GetStringProperty(r, "Name");
-                var description = GetStringProperty(r, "Description");
-                return $"{i + 1}. {ruleName}: {description}";
-            }));
+            rules.Select((r, i) => $"{i + 1}. {r.Name}: {r.Description}"));
 
         return $"""
         Rules:
@@ -123,13 +119,6 @@ internal static class SharedPromptBuilder
         Message:
         {request.Content}
         """;
-    }
-
-    private static string GetStringProperty<T>(T source, string propertyName)
-    {
-        var property = source?.GetType().GetProperty(propertyName);
-        var value = property?.GetValue(source)?.ToString();
-        return string.IsNullOrWhiteSpace(value) ? string.Empty : value;
     }
 
     public static string[] DeserializeExamples(string? json)
