@@ -8,6 +8,7 @@ internal static class DebugDashboard
 
     public static void Queue(long guildId, long channelId, long messageId, long userId, string preview)
     {
+        WriteFlow(ConsoleColor.Cyan, messageId, "QUEUED");
         WriteBlock(
             ConsoleColor.Cyan,
             "QUEUE",
@@ -20,6 +21,7 @@ internal static class DebugDashboard
 
     public static void Processing(long guildId, long channelId, long messageId)
     {
+        WriteFlow(ConsoleColor.Blue, messageId, "PROCESSING");
         WriteBlock(
             ConsoleColor.Blue,
             "PROCESSING",
@@ -30,6 +32,7 @@ internal static class DebugDashboard
 
     public static void Skipped(string reason, long messageId)
     {
+        WriteFlow(ConsoleColor.DarkGray, messageId, NormalizeSkippedState(reason));
         WriteBlock(
             ConsoleColor.DarkGray,
             "SKIPPED",
@@ -39,6 +42,7 @@ internal static class DebugDashboard
 
     public static void SendingToAi(long messageId, int ruleCount, int feedbackCount, int threshold)
     {
+        WriteFlow(ConsoleColor.DarkCyan, messageId, "SENT_TO_AI");
         WriteBlock(
             ConsoleColor.DarkCyan,
             "AI REQUEST",
@@ -50,6 +54,7 @@ internal static class DebugDashboard
 
     public static void FeedbackSuppressed(long messageId, string reason)
     {
+        WriteFlow(ConsoleColor.Magenta, messageId, "SKIPPED_FALSE_POSITIVE_HISTORY");
         WriteBlock(
             ConsoleColor.Magenta,
             "SUPPRESSED",
@@ -59,6 +64,7 @@ internal static class DebugDashboard
 
     public static void ConfidenceAdjusted(long messageId, int originalConfidence, int adjustedConfidence, string notes)
     {
+        WriteFlow(ConsoleColor.Yellow, messageId, "CONFIDENCE_ADJUSTED");
         WriteBlock(
             ConsoleColor.Yellow,
             "CONFIDENCE ADJUSTED",
@@ -71,6 +77,7 @@ internal static class DebugDashboard
     public static void Decision(long messageId, bool shouldAlert, string? ruleName, int confidence, string? reason, long elapsedMs)
     {
         var color = shouldAlert ? ConsoleColor.Red : ConsoleColor.Green;
+        WriteFlow(color, messageId, shouldAlert ? "AI_ALERT" : "AI_NO_ALERT");
         WriteBlock(
             color,
             shouldAlert ? "AI ALERT" : "AI CLEAR",
@@ -83,6 +90,7 @@ internal static class DebugDashboard
 
     public static void BelowThreshold(long messageId, int confidence, int threshold)
     {
+        WriteFlow(ConsoleColor.DarkYellow, messageId, "BELOW_THRESHOLD");
         WriteBlock(
             ConsoleColor.DarkYellow,
             "BELOW THRESHOLD",
@@ -93,6 +101,7 @@ internal static class DebugDashboard
 
     public static void AlertSent(long alertId, long messageId, string? ruleName, int confidence, long alertChannelId, string messageLink)
     {
+        WriteFlow(ConsoleColor.Red, messageId, "ALERT_SENT");
         WriteBlock(
             ConsoleColor.Red,
             "ALERT SENT",
@@ -106,12 +115,62 @@ internal static class DebugDashboard
 
     public static void Error(long messageId, Exception ex)
     {
+        WriteFlow(ConsoleColor.DarkRed, messageId, "ERROR");
         WriteBlock(
             ConsoleColor.DarkRed,
             "ERROR",
             ("Message", messageId.ToString()),
             ("Type", ex.GetType().Name),
             ("Details", ex.Message));
+    }
+
+    private static void WriteFlow(ConsoleColor color, long messageId, string state)
+    {
+        lock (Sync)
+        {
+            var originalColor = Console.ForegroundColor;
+            Console.ForegroundColor = color;
+            var timestamp = DateTime.Now.ToString("HH:mm:ss");
+            Console.WriteLine($"{timestamp} | {messageId} | {state}");
+            Console.ForegroundColor = originalColor;
+        }
+    }
+
+    private static string NormalizeSkippedState(string reason)
+    {
+        var text = (reason ?? string.Empty).Trim().ToLowerInvariant();
+
+        if (text.Contains("no guild settings"))
+        {
+            return "SKIPPED_NO_SETTINGS";
+        }
+
+        if (text.Contains("ai moderation disabled"))
+        {
+            return "SKIPPED_AI_DISABLED";
+        }
+
+        if (text.Contains("no alert channel"))
+        {
+            return "SKIPPED_NO_ALERT_CHANNEL";
+        }
+
+        if (text.Contains("no moderation rules"))
+        {
+            return "SKIPPED_NO_RULES";
+        }
+
+        if (text.Contains("did not trigger an alert"))
+        {
+            return "AI_NO_ALERT";
+        }
+
+        if (text.Contains("could not be resolved"))
+        {
+            return "SKIPPED_ALERT_CHANNEL_UNRESOLVED";
+        }
+
+        return "SKIPPED";
     }
 
     private static void WriteBlock(ConsoleColor color, string title, params (string Label, string Value)[] rows)
@@ -153,6 +212,7 @@ internal static class DebugDashboard
 
         var remaining = safeValue;
         var isFirstLine = true;
+
         while (remaining.Length > 0)
         {
             var take = Math.Min(contentWidth, remaining.Length);
