@@ -15,7 +15,7 @@ internal static class SharedPromptBuilder
         IReadOnlyList<object> rules,
         IReadOnlyList<object> examples) =>
         settings.UseSimplePrompts
-            ? BuildSimpleUserPrompt(request, rules)
+            ? BuildSimpleUserPrompt(request, rules, examples)
             : BuildDetailedUserPrompt(request, rules, examples);
 
     private static string BuildDetailedSystemPrompt() =>
@@ -110,7 +110,10 @@ internal static class SharedPromptBuilder
         """;
     }
 
-    private static string BuildSimpleUserPrompt(ModerationRequest request, IReadOnlyList<object> rules)
+    private static string BuildSimpleUserPrompt(
+        ModerationRequest request,
+        IReadOnlyList<object> rules,
+        IReadOnlyList<object> examples)
     {
         var rulesText = string.Join(
             "\n",
@@ -121,9 +124,24 @@ internal static class SharedPromptBuilder
                 return $"{i + 1}. {ruleName}: {description}";
             }));
 
+        var feedbackText = examples.Count == 0
+            ? "None"
+            : string.Join(
+                "\n",
+                examples.Take(6).Select((e, i) =>
+                {
+                    var ruleName = GetStringProperty(e, "RuleName");
+                    var outcome = GetStringProperty(e, "Outcome");
+                    var messageContent = GetStringProperty(e, "MessageContent");
+                    return $"{i + 1}. [{outcome}] Rule={ruleName} Message={messageContent}";
+                }));
+
         return $"""
         Rules:
         {rulesText}
+
+        Moderator feedback examples:
+        {feedbackText}
 
         Target message:
         {request.Content}

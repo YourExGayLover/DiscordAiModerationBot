@@ -109,6 +109,14 @@ public sealed class ModerationQueue
 
         var feedbackExamples = await _database.GetFeedbackExamplesAsync(request.GuildId, 12, cancellationToken);
 
+        if (FeedbackLearningHelper.IsKnownRejectedDuplicate(request.Content, feedbackExamples))
+        {
+            _logger.LogInformation(
+                "Skipping message {MessageId}: matches a previously rejected false-positive example.",
+                request.MessageId);
+            return;
+        }
+
         _logger.LogInformation(
             "Sending message {MessageId} to AI ProviderRules={RuleCount} FeedbackExamples={FeedbackCount} Threshold={Threshold}",
             request.MessageId,
@@ -122,6 +130,36 @@ public sealed class ModerationQueue
             rules,
             feedbackExamples,
             cancellationToken);
+
+        var adjustment = FeedbackLearningHelper.AdjustDecision(decision, request.Content, feedbackExamples);
+        if (adjustment.SuppressAlert)
+        {
+            _logger.LogInformation(
+                "Suppressing alert for message {MessageId}. Reason={Reason}",
+                request.MessageId,
+                adjustment.Notes ?? "feedback-based suppression");
+            return;
+        }
+
+        if (adjustment.ConfidenceDelta != 0)
+        {
+            var originalConfidence = decision.Confidence;
+            var adjustedConfidence = Math.Clamp(originalConfidence + adjustment.ConfidenceDelta, 0, 100);
+            decision = decision with
+            {
+                Confidence = adjustedConfidence,
+                Reason = string.IsNullOrWhiteSpace(adjustment.Notes)
+                    ? decision.Reason
+                    : $"{decision.Reason} [{adjustment.Notes}]"
+            };
+
+            _logger.LogInformation(
+                "Adjusted confidence for message {MessageId} from {OriginalConfidence} to {AdjustedConfidence}. Notes={Notes}",
+                request.MessageId,
+                originalConfidence,
+                decision.Confidence,
+                adjustment.Notes ?? "n/a");
+        }
 
         _logger.LogInformation(
             "AI decision for message {MessageId}: ShouldAlert={ShouldAlert} Rule={RuleName} Confidence={Confidence} Reason=\"{Reason}\" ElapsedMs={ElapsedMs}",
