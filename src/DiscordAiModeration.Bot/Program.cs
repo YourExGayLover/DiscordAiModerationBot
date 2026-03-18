@@ -18,13 +18,8 @@ builder.Logging.AddSimpleConsole(options =>
     options.SingleLine = true;
 });
 
-var logLevelValue = Environment.GetEnvironmentVariable("BOT_LOG_LEVEL");
-if (!Enum.TryParse<LogLevel>(logLevelValue, ignoreCase: true, out var minimumLogLevel))
-{
-    minimumLogLevel = LogLevel.Debug;
-}
-
-builder.Logging.SetMinimumLevel(minimumLogLevel);
+// Use standard .NET logging configuration from appsettings / environment variables.
+builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
 
 builder.Services.Configure<AiProviderOptions>(options =>
 {
@@ -69,10 +64,9 @@ var host = builder.Build();
 
 var startupLogger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
 startupLogger.LogInformation(
-    "Discord AI Moderation Bot starting. Provider={Provider} OpenAiModel={OpenAiModel} OllamaModel={OllamaModel} LogLevel={LogLevel}",
+    "Discord AI Moderation Bot starting. Provider={Provider} OpenAiModel={OpenAiModel} OllamaModel={OllamaModel}",
     Environment.GetEnvironmentVariable("AI_PROVIDER") ?? "openai",
     Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-5-mini",
-    Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "llama3.2",
-    minimumLogLevel);
+    Environment.GetEnvironmentVariable("OLLAMA_MODEL") ?? "llama3.2");
 
 await host.RunAsync();

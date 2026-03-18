@@ -9,8 +9,6 @@
         "OLLAMA_MODEL": "llama3.1:8b",
         "SQLITE_PATH": "botdata.db",
 
-        "BOT_LOG_LEVEL": "Warning",
-
         "AI_DEBUG_LOGGING": "false",
         "AI_LOG_PROMPTS": "false",
         "AI_LOG_RESPONSES": "false",
@@ -19,6 +17,8 @@
         "Logging__LogLevel__Default": "Warning",
         "Logging__LogLevel__Microsoft": "Warning",
         "Logging__LogLevel__System": "Warning",
+        "Logging__LogLevel__System.Net.Http.HttpClient": "Warning",
+        "Logging__LogLevel__DiscordAiModeration": "Warning",
 
         "Debug__EnableDashboard": "false"
       }
