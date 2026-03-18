@@ -32,13 +32,22 @@ public sealed class ModerationQueue
 
     public ValueTask EnqueueAsync(ModerationRequest request, CancellationToken cancellationToken = default)
     {
+        var preview = HttpLoggingHelper.SafeMessagePreview(request.Content);
+
         _logger.LogInformation(
             "Queued moderation request Guild={GuildId} Channel={ChannelId} Message={MessageId} User={UserId} Preview=\"{Preview}\"",
             request.GuildId,
             request.ChannelId,
             request.MessageId,
             request.UserId,
-            HttpLoggingHelper.SafeMessagePreview(request.Content));
+            preview);
+
+        DebugDashboard.Queue(
+            request.GuildId,
+            request.ChannelId,
+            request.MessageId,
+            request.UserId,
+            preview);
 
         return _queue.Writer.WriteAsync(request, cancellationToken);
     }
@@ -57,6 +66,7 @@ public sealed class ModerationQueue
             }
             catch (Exception ex)
             {
+                DebugDashboard.Error(request.MessageId, ex);
                 _logger.LogError(ex, "Failed to process moderation request for message {MessageId}", request.MessageId);
             }
         }
@@ -72,15 +82,19 @@ public sealed class ModerationQueue
             request.ChannelId,
             request.MessageId);
 
+        DebugDashboard.Processing(request.GuildId, request.ChannelId, request.MessageId);
+
         var settings = await _database.GetGuildSettingsAsync(request.GuildId, cancellationToken);
         if (settings is null)
         {
+            DebugDashboard.Skipped("No guild settings found.", request.MessageId);
             _logger.LogInformation("Skipping message {MessageId}: no guild settings found.", request.MessageId);
             return;
         }
 
         if (!settings.AiEnabled)
         {
+            DebugDashboard.Skipped("AI moderation disabled for guild.", request.MessageId);
             _logger.LogInformation(
                 "Skipping message {MessageId}: AI moderation disabled for guild {GuildId}.",
                 request.MessageId,
@@ -90,6 +104,7 @@ public sealed class ModerationQueue
 
         if (settings.AlertChannelId is null)
         {
+            DebugDashboard.Skipped("No alert channel configured for guild.", request.MessageId);
             _logger.LogWarning(
                 "Skipping message {MessageId}: no alert channel configured for guild {GuildId}.",
                 request.MessageId,
@@ -100,6 +115,7 @@ public sealed class ModerationQueue
         var rules = await _database.ListRulesAsync(request.GuildId, cancellationToken);
         if (rules.Count == 0)
         {
+            DebugDashboard.Skipped("No moderation rules configured for guild.", request.MessageId);
             _logger.LogInformation(
                 "Skipping message {MessageId}: no moderation rules configured for guild {GuildId}.",
                 request.MessageId,
@@ -111,11 +127,18 @@ public sealed class ModerationQueue
 
         if (FeedbackLearningHelper.IsKnownRejectedDuplicate(request.Content, feedbackExamples))
         {
+            DebugDashboard.FeedbackSuppressed(request.MessageId, "Matches a previously rejected false-positive example.");
             _logger.LogInformation(
                 "Skipping message {MessageId}: matches a previously rejected false-positive example.",
                 request.MessageId);
             return;
         }
+
+        DebugDashboard.SendingToAi(
+            request.MessageId,
+            rules.Count,
+            feedbackExamples.Count,
+            settings.ConfidenceThreshold);
 
         _logger.LogInformation(
             "Sending message {MessageId} to AI ProviderRules={RuleCount} FeedbackExamples={FeedbackCount} Threshold={Threshold}",
@@ -134,6 +157,7 @@ public sealed class ModerationQueue
         var adjustment = FeedbackLearningHelper.AdjustDecision(decision, request.Content, feedbackExamples);
         if (adjustment.SuppressAlert)
         {
+            DebugDashboard.FeedbackSuppressed(request.MessageId, adjustment.Notes ?? "feedback-based suppression");
             _logger.LogInformation(
                 "Suppressing alert for message {MessageId}. Reason={Reason}",
                 request.MessageId,
@@ -145,13 +169,18 @@ public sealed class ModerationQueue
         {
             var originalConfidence = decision.Confidence;
             var adjustedConfidence = Math.Clamp(originalConfidence + adjustment.ConfidenceDelta, 0, 100);
-            decision = decision with
-            {
-                Confidence = adjustedConfidence,
-                Reason = string.IsNullOrWhiteSpace(adjustment.Notes)
+
+            decision = new AiDecision(
+                decision.ShouldAlert,
+                decision.Verdict,
+                decision.RuleName,
+                adjustedConfidence,
+                string.IsNullOrWhiteSpace(adjustment.Notes)
                     ? decision.Reason
-                    : $"{decision.Reason} [{adjustment.Notes}]"
-            };
+                    : $"{decision.Reason} [{adjustment.Notes}]",
+                decision.Explanation,
+                decision.ViolatedRules,
+                decision.Sources);
 
             _logger.LogInformation(
                 "Adjusted confidence for message {MessageId} from {OriginalConfidence} to {AdjustedConfidence}. Notes={Notes}",
@@ -160,6 +189,15 @@ public sealed class ModerationQueue
                 decision.Confidence,
                 adjustment.Notes ?? "n/a");
         }
+        var truncatedReason = HttpLoggingHelper.Truncate(decision.Reason, 300);
+
+        DebugDashboard.Decision(
+            request.MessageId,
+            decision.ShouldAlert,
+            decision.RuleName,
+            decision.Confidence,
+            truncatedReason,
+            stopwatch.ElapsedMilliseconds);
 
         _logger.LogInformation(
             "AI decision for message {MessageId}: ShouldAlert={ShouldAlert} Rule={RuleName} Confidence={Confidence} Reason=\"{Reason}\" ElapsedMs={ElapsedMs}",
@@ -167,17 +205,19 @@ public sealed class ModerationQueue
             decision.ShouldAlert,
             decision.RuleName,
             decision.Confidence,
-            HttpLoggingHelper.Truncate(decision.Reason, 300),
+            truncatedReason,
             stopwatch.ElapsedMilliseconds);
 
         if (!decision.ShouldAlert)
         {
+            DebugDashboard.Skipped("AI did not trigger an alert.", request.MessageId);
             _logger.LogInformation("Message {MessageId} did not trigger an alert.", request.MessageId);
             return;
         }
 
         if (decision.Confidence < settings.ConfidenceThreshold)
         {
+            DebugDashboard.BelowThreshold(request.MessageId, decision.Confidence, settings.ConfidenceThreshold);
             _logger.LogInformation(
                 "Message {MessageId} below threshold. Confidence={Confidence} Threshold={Threshold}",
                 request.MessageId,
@@ -206,6 +246,7 @@ public sealed class ModerationQueue
 
         if (_discordClient.GetChannel((ulong)settings.AlertChannelId.Value) is not IMessageChannel alertChannel)
         {
+            DebugDashboard.Skipped("Alert stored, but alert channel could not be resolved.", request.MessageId);
             _logger.LogWarning(
                 "Alert {AlertId} for message {MessageId} was stored, but alert channel {AlertChannelId} could not be resolved.",
                 alertId,
@@ -236,6 +277,14 @@ public sealed class ModerationQueue
             text: pingText,
             embed: embed,
             components: components);
+
+        DebugDashboard.AlertSent(
+            alertId,
+            request.MessageId,
+            decision.RuleName,
+            decision.Confidence,
+            settings.AlertChannelId.Value,
+            messageLink);
 
         _logger.LogInformation(
             "Alert sent AlertId={AlertId} MessageId={MessageId} Rule={RuleName} Confidence={Confidence} AlertChannelId={AlertChannelId} MessageLink={MessageLink}",
