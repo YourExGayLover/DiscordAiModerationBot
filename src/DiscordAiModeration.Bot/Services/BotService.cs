@@ -45,7 +45,7 @@ public sealed class BotService
 
         _discordClient.Ready += OnReadyAsync;
         _discordClient.MessageReceived += OnMessageReceivedAsync;
-        _discordClient.SlashCommandExecuted += OnSlashCommandExecutedAsync;
+        //_discordClient.SlashCommandExecuted += OnSlashCommandExecutedAsync;
         _discordClient.InteractionCreated += OnInteractionCreatedAsync;
 
         var token = Environment.GetEnvironmentVariable("DISCORD_BOT_TOKEN");
@@ -991,14 +991,26 @@ public sealed class BotService
                 {
                     var status = (subCommand.Options.FirstOrDefault(x => x.Name == "status")?.Value as string) ?? "all";
                     var alerts = await _database.ListAlertsAsync(guildId, status, 15);
+
                     if (alerts.Count == 0)
                     {
                         await command.RespondAsync("No alerts found.", ephemeral: true);
                         return;
                     }
 
-                    var lines = alerts.Select(a => $"**#{a.Id}** [{a.FeedbackStatus}] Rule={a.RuleName} Confidence={a.Confidence}% User=<@{a.UserId}> Text=\"{Trim(a.MessageContent, 80)}\"");
-                    await command.RespondAsync(string.Join("\n", lines), ephemeral: true);
+                    var lines = alerts.Select(a =>
+                        $"**#{a.Id}** [{a.FeedbackStatus}] Rule={a.RuleName} Confidence={a.Confidence}% User=<@{a.UserId}> Text=\"{Trim(a.MessageContent, 80)}\"");
+
+                    var content = string.Join("\n", lines);
+                    var chunks = Chunk(content, 1900).ToList();
+
+                    await command.RespondAsync(chunks[0], ephemeral: true);
+
+                    for (var i = 1; i < chunks.Count; i++)
+                    {
+                        await command.FollowupAsync(chunks[i], ephemeral: true);
+                    }
+
                     break;
                 }
         }
