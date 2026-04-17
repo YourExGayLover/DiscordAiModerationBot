@@ -69,18 +69,18 @@ namespace DiscordAiModeration.Bot.Services
 
                 await command.DeferAsync(ephemeral: true);
 
-                LogProgress("=== BACKUP START ===");
-                LogProgress($"Source guild: {sourceGuild.Name} ({sourceGuild.Id})");
+                LogInfo("=== BACKUP START ===");
+                LogInfo($"Source guild: {sourceGuild.Name} ({sourceGuild.Id})");
 
                 var roles = BuildRoleBackup(sourceGuild);
-                LogProgress($"Built role backup. Count={roles.Count}");
+                LogInfo($"Built role backup. Count={roles.Count}");
 
                 var channels = BuildChannelBackup(sourceGuild);
-                LogProgress($"Built channel backup. Count={channels.Count}");
+                LogInfo($"Built channel backup. Count={channels.Count}");
 
                 var backup = new GuildConfigurationBackup
                 {
-                    Version = 4,
+                    Version = 3,
                     ExportedAtUtc = DateTime.UtcNow,
                     SourceGuildId = sourceGuild.Id,
                     SourceGuildName = sourceGuild.Name,
@@ -91,7 +91,7 @@ namespace DiscordAiModeration.Bot.Services
                 var fileName = $"{sourceGuild.Id}-{SanitizeFileName(sourceGuild.Name)}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
                 var fullPath = Path.Combine(_backupDirectory, fileName);
 
-                LogProgress($"Writing backup file to {fullPath}");
+                LogInfo($"Writing backup file to {fullPath}");
 
                 var json = JsonSerializer.Serialize(backup, new JsonSerializerOptions
                 {
@@ -100,7 +100,7 @@ namespace DiscordAiModeration.Bot.Services
 
                 await File.WriteAllTextAsync(fullPath, json);
 
-                LogProgress($"=== BACKUP COMPLETE === File={fileName}");
+                LogInfo($"=== BACKUP COMPLETE === File={fileName}");
 
                 await command.FollowupAsync(
                     $"Backed up **{sourceGuild.Name}** to `{fileName}`.",
@@ -108,7 +108,8 @@ namespace DiscordAiModeration.Bot.Services
             }
             catch (Exception ex)
             {
-                LogError(ex, "Error while backing up guild configuration.");
+                _logger.LogError(ex, "Error while backing up guild configuration.");
+                Console.WriteLine($"[GuildConfigurationService] BACKUP ERROR: {ex}");
                 await SafeErrorResponseAsync(command, "An error occurred while backing up the configuration.");
             }
         }
@@ -137,7 +138,10 @@ namespace DiscordAiModeration.Bot.Services
                     return;
                 }
 
-                var filename = command.Data.Options.FirstOrDefault(x => x.Name == "filename")?.Value?.ToString();
+                var filename = command.Data.Options
+                    .FirstOrDefault(x => x.Name == "filename")
+                    ?.Value?
+                    .ToString();
 
                 if (string.IsNullOrWhiteSpace(filename))
                 {
@@ -160,27 +164,31 @@ namespace DiscordAiModeration.Bot.Services
 
                 await command.DeferAsync(ephemeral: true);
 
-                LogProgress("=== LOAD START ===");
-                LogProgress($"Target guild: {targetGuild.Name} ({targetGuild.Id})");
-                LogProgress($"Backup file: {fullPath}");
+                LogInfo("=== LOAD START ===");
+                LogInfo($"Target guild: {targetGuild.Name} ({targetGuild.Id})");
+                LogInfo($"Backup file: {fullPath}");
 
                 var json = await File.ReadAllTextAsync(fullPath);
                 var backup = JsonSerializer.Deserialize<GuildConfigurationBackup>(json);
 
                 if (backup == null)
                 {
-                    LogProgress("Backup deserialization returned null.");
+                    LogInfo("Backup file could not be deserialized.");
                     await command.FollowupAsync("The backup file could not be read.", ephemeral: true);
                     return;
                 }
 
-                LogProgress($"Backup loaded. Source={backup.SourceGuildName} ({backup.SourceGuildId}) Roles={backup.Roles.Count} Channels={backup.Channels.Count}");
+                LogInfo($"Backup loaded. Source={backup.SourceGuildName} ({backup.SourceGuildId}) Roles={backup.Roles.Count} Channels={backup.Channels.Count}");
 
                 var me = targetGuild.CurrentUser;
-                if (me == null || !me.GuildPermissions.ManageRoles || !me.GuildPermissions.ManageChannels)
+                if (me == null ||
+                    !me.GuildPermissions.ManageRoles ||
+                    !me.GuildPermissions.ManageChannels)
                 {
-                    LogProgress("Bot is missing Manage Roles or Manage Channels in the target guild.");
-                    await command.FollowupAsync("The bot needs **Manage Roles** and **Manage Channels** in the target server.", ephemeral: true);
+                    LogInfo("Bot lacks Manage Roles and/or Manage Channels.");
+                    await command.FollowupAsync(
+                        "The bot needs **Manage Roles** and **Manage Channels** in the target server.",
+                        ephemeral: true);
                     return;
                 }
 
@@ -190,7 +198,7 @@ namespace DiscordAiModeration.Bot.Services
                 if (command.Channel is SocketGuildChannel currentChannel)
                 {
                     preservedChannelIds.Add(currentChannel.Id);
-                    LogProgress($"Preserving command channel: {currentChannel.Name} ({currentChannel.Id})");
+                    LogInfo($"Preserving command channel: {currentChannel.Name} ({currentChannel.Id})");
 
                     if (currentChannel is SocketTextChannel currentText && currentText.Category != null)
                     {
@@ -202,131 +210,209 @@ namespace DiscordAiModeration.Bot.Services
                     }
                 }
 
-                LogProgress("Stage 1: deleting existing channels");
+                LogInfo("Stage 1: deleting existing channels");
                 await DeleteExistingChannelsAsync(targetGuild, preservedChannelIds, preservedParentCategoryId);
-                LogProgress("Stage 1 complete");
+                LogInfo("Stage 1 complete");
 
-                LogProgress("Stage 2: deleting existing roles");
+                LogInfo("Stage 2: deleting existing roles");
                 await DeleteExistingRolesAsync(targetGuild, me);
-                LogProgress("Stage 2 complete");
+                LogInfo("Stage 2 complete");
 
-                LogProgress("Stage 3: creating roles");
+                LogInfo("Stage 3: creating roles");
                 var roleIdMap = new Dictionary<ulong, ulong>();
-                var createdRoles = new List<(ulong OriginalId, ulong NewId, int SourcePosition)>();
+                var createdRoles = new List<(RoleConfigurationBackup Backup, ulong NewId)>();
 
-                var orderedRoles = backup.Roles.OrderByDescending(x => x.Position).ToList();
+                var orderedRolesForCreate = backup.Roles
+                    .OrderBy(r => HasAdministratorPermission(r) ? 1 : 0)
+                    .ThenByDescending(r => r.Position)
+                    .ToList();
 
-                for (var i = 0; i < orderedRoles.Count; i++)
+                var totalRoles = orderedRolesForCreate.Count;
+                var roleIndex = 0;
+
+                foreach (var roleBackup in orderedRolesForCreate)
                 {
-                    var roleBackup = orderedRoles[i];
-                    try
+                    roleIndex++;
+
+                    var createdRole = await CreateRoleWithRetriesAsync(
+                        targetGuild,
+                        roleBackup,
+                        roleIndex,
+                        totalRoles);
+
+                    if (createdRole == null)
                     {
-                        LogProgress($"Creating role START [{i + 1}/{orderedRoles.Count}] Name={roleBackup.Name} SourcePosition={roleBackup.Position}");
+                        await command.FollowupAsync(
+                            $"Load stopped because role **{roleBackup.Name}** could not be created after multiple retries.",
+                            ephemeral: true);
 
-                        var createdRole = await targetGuild.CreateRoleAsync(
-                            roleBackup.Name,
-                            new GuildPermissions(roleBackup.PermissionsRawValue),
-                            new Color(roleBackup.ColorRawValue),
-                            roleBackup.IsHoisted,
-                            roleBackup.IsMentionable);
-
-                        roleIdMap[roleBackup.OriginalId] = createdRole.Id;
-                        createdRoles.Add((roleBackup.OriginalId, createdRole.Id, roleBackup.Position));
-
-                        LogProgress($"Creating role DONE [{i + 1}/{orderedRoles.Count}] Name={roleBackup.Name} NewRoleId={createdRole.Id}");
-
-                        await Task.Delay(500);
+                        return;
                     }
-                    catch (Exception ex)
-                    {
-                        LogError(ex, $"Creating role FAILED [{i + 1}/{orderedRoles.Count}] Name={roleBackup.Name} SourcePosition={roleBackup.Position}");
-                    }
+
+                    roleIdMap[roleBackup.OriginalId] = createdRole.Id;
+                    createdRoles.Add((roleBackup, createdRole.Id));
                 }
 
-                LogProgress("Stage 4: reordering created roles");
+                LogInfo($"Stage 3 complete. CreatedRoles={createdRoles.Count}");
+
+                LogInfo("Stage 4: reordering roles");
                 await ReorderCreatedRolesAsync(targetGuild, createdRoles);
-                LogProgress("Stage 4 complete");
+                LogInfo("Stage 4 complete");
+
+                LogInfo("Stage 5: applying role properties");
+                await ApplyCreatedRolePropertiesAsync(targetGuild, createdRoles);
+                LogInfo("Stage 5 complete");
 
                 var createdCategoryMap = new Dictionary<ulong, ulong>();
                 var createdChannelMap = new Dictionary<ulong, IGuildChannel>();
 
-                LogProgress("Stage 5: creating categories");
-                foreach (var categoryBackup in backup.Channels.Where(x => string.Equals(x.ChannelKind, "category", StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.Position))
+                LogInfo("Stage 6: creating categories");
+                foreach (var categoryBackup in backup.Channels
+                             .Where(x => string.Equals(x.ChannelKind, "category", StringComparison.OrdinalIgnoreCase))
+                             .OrderBy(x => x.Position))
                 {
                     try
                     {
-                        LogProgress($"Creating category START Name={categoryBackup.Name}");
+                        LogInfo($"Creating category START Name={categoryBackup.Name} Position={categoryBackup.Position}");
 
-                        var createdCategory = await targetGuild.CreateCategoryChannelAsync(categoryBackup.Name);
-                        await createdCategory.ModifyAsync(props => { props.Position = categoryBackup.Position; });
+                        var createdCategory = await RunWithHeartbeatAndTimeoutAsync(
+                            () => targetGuild.CreateCategoryChannelAsync(categoryBackup.Name),
+                            $"CreateCategory:{categoryBackup.Name}",
+                            10000,
+                            120000);
+
+                        await createdCategory.ModifyAsync(props =>
+                        {
+                            props.Position = categoryBackup.Position;
+                        });
+
+                        await ApplyRolePermissionOverwritesAsync(
+                            createdCategory,
+                            categoryBackup.PermissionOverwrites,
+                            targetGuild,
+                            roleIdMap);
 
                         createdCategoryMap[categoryBackup.OriginalId] = createdCategory.Id;
                         createdChannelMap[categoryBackup.OriginalId] = createdCategory;
 
-                        LogProgress($"Creating category DONE Name={categoryBackup.Name} NewChannelId={createdCategory.Id}");
-
-                        await Task.Delay(350);
+                        LogInfo($"Creating category DONE Name={categoryBackup.Name} NewChannelId={createdCategory.Id}");
+                        await Task.Delay(2000);
                     }
                     catch (Exception ex)
                     {
-                        LogError(ex, $"Failed to create category {categoryBackup.Name}");
+                        _logger.LogWarning(ex, "Failed to create category {ChannelName}", categoryBackup.Name);
+                        Console.WriteLine($"[GuildConfigurationService] Failed to create category {categoryBackup.Name}: {ex}");
                     }
                 }
 
-                LogProgress("Stage 6: creating non-category channels");
-                foreach (var channelBackup in backup.Channels.Where(x => !string.Equals(x.ChannelKind, "category", StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.Position))
+                LogInfo($"Stage 6 complete. CreatedCategories={createdCategoryMap.Count}");
+
+                LogInfo("Stage 7: creating non-category channels");
+                foreach (var channelBackup in backup.Channels
+                             .Where(x => !string.Equals(x.ChannelKind, "category", StringComparison.OrdinalIgnoreCase))
+                             .OrderBy(x => x.Position))
                 {
                     try
                     {
-                        IGuildChannel createdChannel = null;
-                        LogProgress($"Creating channel START Kind={channelBackup.ChannelKind} Name={channelBackup.Name}");
+                        IGuildChannel? createdChannel = null;
+
+                        LogInfo($"Creating channel START Kind={channelBackup.ChannelKind} Name={channelBackup.Name} Position={channelBackup.Position}");
 
                         if (string.Equals(channelBackup.ChannelKind, "voice", StringComparison.OrdinalIgnoreCase))
                         {
-                            var createdVoice = await targetGuild.CreateVoiceChannelAsync(channelBackup.Name);
+                            var createdVoice = await RunWithHeartbeatAndTimeoutAsync(
+                                () => targetGuild.CreateVoiceChannelAsync(channelBackup.Name),
+                                $"CreateVoice:{channelBackup.Name}",
+                                10000,
+                                120000);
+
                             await createdVoice.ModifyAsync(props =>
                             {
-                                if (channelBackup.Bitrate.HasValue) props.Bitrate = channelBackup.Bitrate.Value;
-                                if (channelBackup.UserLimit.HasValue) props.UserLimit = channelBackup.UserLimit.Value;
+                                if (channelBackup.Bitrate.HasValue)
+                                {
+                                    props.Bitrate = channelBackup.Bitrate.Value;
+                                }
+
+                                if (channelBackup.UserLimit.HasValue)
+                                {
+                                    props.UserLimit = channelBackup.UserLimit.Value;
+                                }
+
                                 props.Position = channelBackup.Position;
                             });
+
+                            await ApplyRolePermissionOverwritesAsync(
+                                createdVoice,
+                                channelBackup.PermissionOverwrites,
+                                targetGuild,
+                                roleIdMap);
+
                             createdChannel = createdVoice;
                         }
                         else if (string.Equals(channelBackup.ChannelKind, "text", StringComparison.OrdinalIgnoreCase))
                         {
-                            var createdText = await targetGuild.CreateTextChannelAsync(channelBackup.Name);
+                            var createdText = await RunWithHeartbeatAndTimeoutAsync(
+                                () => targetGuild.CreateTextChannelAsync(channelBackup.Name),
+                                $"CreateText:{channelBackup.Name}",
+                                10000,
+                                120000);
+
                             await createdText.ModifyAsync(props =>
                             {
                                 props.Topic = channelBackup.Topic;
                                 props.SlowModeInterval = channelBackup.SlowModeSeconds;
                                 props.Position = channelBackup.Position;
                             });
+
+                            await ApplyRolePermissionOverwritesAsync(
+                                createdText,
+                                channelBackup.PermissionOverwrites,
+                                targetGuild,
+                                roleIdMap);
+
                             createdChannel = createdText;
+                        }
+                        else
+                        {
+                            LogInfo($"Skipping unsupported saved channel kind {channelBackup.ChannelKind} for channel {channelBackup.Name}");
                         }
 
                         if (createdChannel != null)
                         {
                             createdChannelMap[channelBackup.OriginalId] = createdChannel;
-                            LogProgress($"Creating channel DONE Kind={channelBackup.ChannelKind} Name={channelBackup.Name} NewChannelId={createdChannel.Id}");
+                            LogInfo($"Creating channel DONE Kind={channelBackup.ChannelKind} Name={channelBackup.Name} NewChannelId={createdChannel.Id}");
+                            await Task.Delay(1500);
                         }
-
-                        await Task.Delay(350);
                     }
                     catch (Exception ex)
                     {
-                        LogError(ex, $"Failed to create channel {channelBackup.Name}");
+                        _logger.LogWarning(ex, "Failed to create channel {ChannelName}", channelBackup.Name);
+                        Console.WriteLine($"[GuildConfigurationService] Failed to create channel {channelBackup.Name}: {ex}");
                     }
                 }
 
-                LogProgress("Stage 7: assigning parent categories");
-                foreach (var channelBackup in backup.Channels.Where(x => !string.Equals(x.ChannelKind, "category", StringComparison.OrdinalIgnoreCase)).Where(x => x.ParentCategoryOriginalId.HasValue))
+                LogInfo($"Stage 7 complete. CreatedChannels={createdChannelMap.Count}");
+
+                LogInfo("Stage 8: assigning parent categories");
+                foreach (var channelBackup in backup.Channels
+                             .Where(x => !string.Equals(x.ChannelKind, "category", StringComparison.OrdinalIgnoreCase))
+                             .Where(x => x.ParentCategoryOriginalId.HasValue))
                 {
                     try
                     {
-                        if (!createdChannelMap.TryGetValue(channelBackup.OriginalId, out var createdChannel)) continue;
-                        if (!createdCategoryMap.TryGetValue(channelBackup.ParentCategoryOriginalId.Value, out var parentCategoryId)) continue;
+                        if (!createdChannelMap.TryGetValue(channelBackup.OriginalId, out var createdChannel))
+                        {
+                            LogInfo($"Skipping category assignment for channel {channelBackup.Name} because the channel was not created");
+                            continue;
+                        }
 
-                        LogProgress($"Assigning category START Channel={channelBackup.Name}");
+                        if (!createdCategoryMap.TryGetValue(channelBackup.ParentCategoryOriginalId!.Value, out var parentCategoryId))
+                        {
+                            LogInfo($"Skipping category assignment for channel {channelBackup.Name} because the parent category was not created");
+                            continue;
+                        }
+
+                        LogInfo($"Assigning category START ChannelName={channelBackup.Name} ParentCategoryId={parentCategoryId}");
 
                         if (createdChannel is SocketTextChannel textChannel)
                         {
@@ -337,31 +423,18 @@ namespace DiscordAiModeration.Bot.Services
                             await voiceChannel.ModifyAsync(props => props.CategoryId = parentCategoryId);
                         }
 
-                        LogProgress($"Assigning category DONE Channel={channelBackup.Name}");
+                        LogInfo($"Assigning category DONE ChannelName={channelBackup.Name} ParentCategoryId={parentCategoryId}");
+                        await Task.Delay(750);
                     }
                     catch (Exception ex)
                     {
-                        LogError(ex, $"Failed to assign category for channel {channelBackup.Name}");
+                        _logger.LogWarning(ex, "Failed to assign category for channel {ChannelName}", channelBackup.Name);
+                        Console.WriteLine($"[GuildConfigurationService] Failed to assign category for channel {channelBackup.Name}: {ex}");
                     }
                 }
 
-                LogProgress("Stage 8: applying permission overwrites");
-                foreach (var channelBackup in backup.Channels.OrderBy(x => x.Position))
-                {
-                    try
-                    {
-                        if (!createdChannelMap.TryGetValue(channelBackup.OriginalId, out var createdChannel)) continue;
-
-                        await ApplyRolePermissionOverwritesAsync(createdChannel, channelBackup.PermissionOverwrites, targetGuild, roleIdMap);
-                        await Task.Delay(250);
-                    }
-                    catch (Exception ex)
-                    {
-                        LogError(ex, $"Failed applying overwrites for channel {channelBackup.Name}");
-                    }
-                }
-
-                LogProgress("=== LOAD COMPLETE ===");
+                LogInfo("Stage 8 complete");
+                LogInfo("=== LOAD COMPLETE ===");
 
                 await command.FollowupAsync(
                     $"Loaded configuration from `{filename}` into **{targetGuild.Name}**. Existing roles and channels were cleared first, except the channel used to run the command.",
@@ -369,61 +442,149 @@ namespace DiscordAiModeration.Bot.Services
             }
             catch (Exception ex)
             {
-                LogError(ex, "Error while loading guild configuration.");
+                _logger.LogError(ex, "Error while loading guild configuration.");
+                Console.WriteLine($"[GuildConfigurationService] LOAD ERROR: {ex}");
                 await SafeErrorResponseAsync(command, "An error occurred while loading the configuration.");
             }
         }
 
-        private async Task DeleteExistingChannelsAsync(SocketGuild guild, HashSet<ulong> preservedChannelIds, ulong? preservedParentCategoryId)
+        private async Task<IRole?> CreateRoleWithRetriesAsync(
+            SocketGuild guild,
+            RoleConfigurationBackup roleBackup,
+            int roleIndex,
+            int totalRoles)
         {
-            var channels = guild.Channels.ToList();
+            const int maxAttempts = 5;
+            const int waitBetweenAttemptsMs = 15000;
+            const int heartbeatMs = 10000;
+            const int perAttemptTimeoutMs = 120000;
 
-            foreach (var channel in channels.Where(c => c is not SocketCategoryChannel).OrderByDescending(c => c.Position))
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
             {
-                if (preservedChannelIds.Contains(channel.Id))
-                {
-                    LogProgress($"Preserving command channel {channel.Name} ({channel.Id})");
-                    continue;
-                }
-
                 try
                 {
-                    LogProgress($"Deleting channel START {channel.Name} ({channel.Id})");
-                    await channel.DeleteAsync();
-                    LogProgress($"Deleting channel DONE {channel.Name} ({channel.Id})");
-                    await Task.Delay(300);
+                    LogInfo(
+                        $"Creating role START [{roleIndex}/{totalRoles}] Attempt={attempt}/{maxAttempts} " +
+                        $"Name={roleBackup.Name} SourcePosition={roleBackup.Position} IsAdmin={HasAdministratorPermission(roleBackup)}");
+
+                    var createdRole = await RunWithHeartbeatAndTimeoutAsync(
+                        () => guild.CreateRoleAsync(roleBackup.Name),
+                        $"CreateRole:{roleBackup.Name}:Attempt{attempt}",
+                        heartbeatMs,
+                        perAttemptTimeoutMs);
+
+                    LogInfo(
+                        $"Creating role DONE [{roleIndex}/{totalRoles}] Attempt={attempt}/{maxAttempts} " +
+                        $"Name={roleBackup.Name} NewRoleId={createdRole.Id}");
+
+                    await Task.Delay(waitBetweenAttemptsMs);
+                    return createdRole;
+                }
+                catch (TimeoutException ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Creating role TIMED OUT [{Index}/{Total}] Attempt={Attempt}/{MaxAttempts} Name={RoleName}",
+                        roleIndex,
+                        totalRoles,
+                        attempt,
+                        maxAttempts,
+                        roleBackup.Name);
+
+                    Console.WriteLine(
+                        $"[GuildConfigurationService] Creating role TIMED OUT " +
+                        $"[{roleIndex}/{totalRoles}] Attempt={attempt}/{maxAttempts} {roleBackup.Name}: {ex.Message}");
                 }
                 catch (Exception ex)
                 {
-                    LogError(ex, $"Failed to delete channel {channel.Name} ({channel.Id})");
+                    _logger.LogWarning(ex,
+                        "Creating role FAILED [{Index}/{Total}] Attempt={Attempt}/{MaxAttempts} Name={RoleName}",
+                        roleIndex,
+                        totalRoles,
+                        attempt,
+                        maxAttempts,
+                        roleBackup.Name);
+
+                    Console.WriteLine(
+                        $"[GuildConfigurationService] Creating role FAILED " +
+                        $"[{roleIndex}/{totalRoles}] Attempt={attempt}/{maxAttempts} {roleBackup.Name}: {ex}");
+                }
+
+                if (attempt < maxAttempts)
+                {
+                    LogInfo(
+                        $"Retrying role create after wait. Name={roleBackup.Name} " +
+                        $"NextAttempt={attempt + 1}/{maxAttempts}");
+
+                    await Task.Delay(waitBetweenAttemptsMs);
                 }
             }
 
-            foreach (var category in channels.OfType<SocketCategoryChannel>().OrderByDescending(c => c.Position))
+            LogInfo($"Creating role GAVE UP Name={roleBackup.Name}");
+            return null;
+        }
+
+        private async Task DeleteExistingChannelsAsync(
+            SocketGuild guild,
+            HashSet<ulong> preservedChannelIds,
+            ulong? preservedParentCategoryId)
+        {
+            var channels = guild.Channels.ToList();
+
+            foreach (var channel in channels
+                         .Where(c => c is not SocketCategoryChannel)
+                         .OrderByDescending(c => c.Position))
             {
-                if (preservedParentCategoryId.HasValue && category.Id == preservedParentCategoryId.Value)
+                if (preservedChannelIds.Contains(channel.Id))
                 {
-                    LogProgress($"Preserving category containing the command channel {category.Name} ({category.Id})");
+                    LogInfo($"Preserving command channel {channel.Name} ({channel.Id})");
                     continue;
                 }
 
                 try
                 {
-                    LogProgress($"Deleting category START {category.Name} ({category.Id})");
-                    await category.DeleteAsync();
-                    LogProgress($"Deleting category DONE {category.Name} ({category.Id})");
+                    LogInfo($"Deleting channel START {channel.Name} ({channel.Id}) Position={channel.Position}");
+                    await channel.DeleteAsync();
+                    LogInfo($"Deleting channel DONE {channel.Name} ({channel.Id})");
                     await Task.Delay(300);
                 }
                 catch (Exception ex)
                 {
-                    LogError(ex, $"Failed to delete category {category.Name} ({category.Id})");
+                    _logger.LogWarning(ex, "Failed to delete channel {ChannelName} ({ChannelId})", channel.Name, channel.Id);
+                    Console.WriteLine($"[GuildConfigurationService] Failed to delete channel {channel.Name}: {ex}");
+                }
+            }
+
+            foreach (var category in channels
+                         .OfType<SocketCategoryChannel>()
+                         .OrderByDescending(c => c.Position))
+            {
+                if (preservedParentCategoryId.HasValue && category.Id == preservedParentCategoryId.Value)
+                {
+                    LogInfo($"Preserving category containing the command channel {category.Name} ({category.Id})");
+                    continue;
+                }
+
+                try
+                {
+                    LogInfo($"Deleting category START {category.Name} ({category.Id}) Position={category.Position}");
+                    await category.DeleteAsync();
+                    LogInfo($"Deleting category DONE {category.Name} ({category.Id})");
+                    await Task.Delay(300);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete category {ChannelName} ({ChannelId})", category.Name, category.Id);
+                    Console.WriteLine($"[GuildConfigurationService] Failed to delete category {category.Name}: {ex}");
                 }
             }
         }
 
         private async Task DeleteExistingRolesAsync(SocketGuild guild, SocketGuildUser me)
         {
-            var protectedRoleIds = new HashSet<ulong>(me.Roles.Select(r => r.Id)) { guild.EveryoneRole.Id };
+            var protectedRoleIds = new HashSet<ulong>(me.Roles.Select(r => r.Id))
+            {
+                guild.EveryoneRole.Id
+            };
 
             var rolesToDelete = guild.Roles
                 .Where(role => !protectedRoleIds.Contains(role.Id))
@@ -436,43 +597,108 @@ namespace DiscordAiModeration.Bot.Services
             {
                 try
                 {
-                    LogProgress($"Deleting role START {role.Name} ({role.Id}) Position={role.Position}");
+                    LogInfo($"Deleting role START {role.Name} ({role.Id}) Position={role.Position}");
                     await role.DeleteAsync();
-                    LogProgress($"Deleting role DONE {role.Name} ({role.Id})");
+                    LogInfo($"Deleting role DONE {role.Name} ({role.Id})");
                     await Task.Delay(300);
                 }
                 catch (Exception ex)
                 {
-                    LogError(ex, $"Failed to delete role {role.Name} ({role.Id})");
+                    _logger.LogWarning(ex, "Failed to delete role {RoleName} ({RoleId})", role.Name, role.Id);
+                    Console.WriteLine($"[GuildConfigurationService] Failed to delete role {role.Name}: {ex}");
                 }
             }
         }
 
-        private async Task ReorderCreatedRolesAsync(SocketGuild guild, List<(ulong OriginalId, ulong NewId, int SourcePosition)> createdRoles)
+        private async Task ReorderCreatedRolesAsync(
+            SocketGuild guild,
+            List<(RoleConfigurationBackup Backup, ulong NewId)> createdRoles)
         {
             if (createdRoles.Count == 0)
             {
-                LogProgress("No created roles to reorder.");
+                LogInfo("No created roles to reorder.");
                 return;
             }
 
             try
             {
-                var sortedBySource = createdRoles.OrderBy(x => x.SourcePosition).ToList();
+                LogInfo($"Reordering created roles. Count={createdRoles.Count}");
+
+                var sortedBySource = createdRoles
+                    .OrderBy(x => x.Backup.Position)
+                    .ToList();
+
                 var reorderList = new List<ReorderRoleProperties>();
 
                 for (var i = 0; i < sortedBySource.Count; i++)
                 {
+                    LogInfo($"Role reorder target Index={i + 1} Name={sortedBySource[i].Backup.Name} NewRoleId={sortedBySource[i].NewId} SourcePosition={sortedBySource[i].Backup.Position}");
                     reorderList.Add(new ReorderRoleProperties(sortedBySource[i].NewId, i + 1));
                 }
 
-                LogProgress($"Reordering roles START Count={reorderList.Count}");
                 await guild.ReorderRolesAsync(reorderList);
-                LogProgress("Reordering roles DONE");
+
+                LogInfo("Role reorder complete.");
             }
             catch (Exception ex)
             {
-                LogError(ex, $"Failed to reorder created roles in guild {guild.Id}");
+                _logger.LogWarning(ex, "Failed to reorder created roles in guild {GuildId}", guild.Id);
+                Console.WriteLine($"[GuildConfigurationService] Failed to reorder created roles: {ex}");
+            }
+        }
+
+        private async Task ApplyCreatedRolePropertiesAsync(
+            SocketGuild guild,
+            List<(RoleConfigurationBackup Backup, ulong NewId)> createdRoles)
+        {
+            if (createdRoles.Count == 0)
+            {
+                return;
+            }
+
+            var orderedRolesForModify = createdRoles
+                .OrderBy(r => HasAdministratorPermission(r.Backup) ? 1 : 0)
+                .ThenByDescending(r => r.Backup.Position)
+                .ToList();
+
+            var total = orderedRolesForModify.Count;
+            var index = 0;
+
+            foreach (var item in orderedRolesForModify)
+            {
+                index++;
+
+                try
+                {
+                    var role = guild.GetRole(item.NewId);
+                    if (role == null)
+                    {
+                        LogInfo($"Skipping role property apply [{index}/{total}] {item.Backup.Name} because the new role was not found");
+                        continue;
+                    }
+
+                    LogInfo($"Applying role properties START [{index}/{total}] Name={item.Backup.Name} IsAdmin={HasAdministratorPermission(item.Backup)}");
+
+                    await RunWithHeartbeatAndTimeoutAsync(
+                        () => role.ModifyAsync(props =>
+                        {
+                            props.Color = new Color(item.Backup.ColorRawValue);
+                            props.Hoist = item.Backup.IsHoisted;
+                            props.Mentionable = item.Backup.IsMentionable;
+                            props.Permissions = new GuildPermissions(item.Backup.PermissionsRawValue);
+                        }),
+                        $"ModifyRole:{item.Backup.Name}",
+                        10000,
+                        120000);
+
+                    LogInfo($"Applying role properties DONE [{index}/{total}] Name={item.Backup.Name}");
+                    await Task.Delay(8000);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to apply properties for role {RoleName}", item.Backup.Name);
+                    Console.WriteLine($"[GuildConfigurationService] Applying role properties FAILED [{index}/{total}] {item.Backup.Name}: {ex}");
+                }
             }
         }
 
@@ -502,7 +728,7 @@ namespace DiscordAiModeration.Bot.Services
             {
                 if (channel is SocketThreadChannel)
                 {
-                    LogProgress($"Skipping thread channel during backup {channel.Name} ({channel.Id})");
+                    LogInfo($"Skipping thread channel during backup {channel.Name} ({channel.Id})");
                     continue;
                 }
 
@@ -516,6 +742,7 @@ namespace DiscordAiModeration.Bot.Services
                         Position = categoryChannel.Position,
                         PermissionOverwrites = BuildPermissionOverwrites(categoryChannel)
                     });
+
                     continue;
                 }
 
@@ -532,6 +759,7 @@ namespace DiscordAiModeration.Bot.Services
                         UserLimit = voiceChannel.UserLimit,
                         PermissionOverwrites = BuildPermissionOverwrites(voiceChannel)
                     });
+
                     continue;
                 }
 
@@ -549,10 +777,11 @@ namespace DiscordAiModeration.Bot.Services
                         SlowModeSeconds = textChannel.SlowModeInterval,
                         PermissionOverwrites = BuildPermissionOverwrites(textChannel)
                     });
+
                     continue;
                 }
 
-                LogProgress($"Skipping unsupported channel type {channel.GetType().Name} for channel {channel.Name} ({channel.Id})");
+                LogInfo($"Skipping unsupported channel type {channel.GetType().Name} for channel {channel.Name} ({channel.Id})");
             }
 
             return channels;
@@ -569,7 +798,10 @@ namespace DiscordAiModeration.Bot.Services
 
             foreach (var overwrite in channel.PermissionOverwrites)
             {
-                if (overwrite.TargetType != PermissionTarget.Role) continue;
+                if (overwrite.TargetType != PermissionTarget.Role)
+                {
+                    continue;
+                }
 
                 list.Add(new PermissionOverwriteBackup
                 {
@@ -582,27 +814,39 @@ namespace DiscordAiModeration.Bot.Services
             return list;
         }
 
-        private async Task ApplyRolePermissionOverwritesAsync(IGuildChannel channel, List<PermissionOverwriteBackup> overwrites, SocketGuild guild, Dictionary<ulong, ulong> roleIdMap)
+        private async Task ApplyRolePermissionOverwritesAsync(
+            IGuildChannel channel,
+            List<PermissionOverwriteBackup> overwrites,
+            SocketGuild guild,
+            Dictionary<ulong, ulong> roleIdMap)
         {
-            for (var i = 0; i < overwrites.Count; i++)
+            if (overwrites.Count == 0)
             {
-                var overwrite = overwrites[i];
+                LogInfo($"No permission overwrites to apply for channel {channel.Name} ({channel.Id})");
+                return;
+            }
+
+            var index = 0;
+            foreach (var overwrite in overwrites)
+            {
+                index++;
+
                 try
                 {
                     if (!roleIdMap.TryGetValue(overwrite.RoleOriginalId, out var mappedRoleId))
                     {
-                        LogProgress($"Skipping overwrite [{i + 1}/{overwrites.Count}] on channel {channel.Name} because no mapped role exists for original role {overwrite.RoleOriginalId}");
+                        LogInfo($"Skipping overwrite {index}/{overwrites.Count} for channel {channel.Name} because original role {overwrite.RoleOriginalId} has no mapped role");
                         continue;
                     }
 
                     var role = guild.GetRole(mappedRoleId);
                     if (role == null)
                     {
-                        LogProgress($"Skipping overwrite [{i + 1}/{overwrites.Count}] on channel {channel.Name} because mapped role {mappedRoleId} was not found");
+                        LogInfo($"Skipping overwrite {index}/{overwrites.Count} for channel {channel.Name} because mapped role {mappedRoleId} was not found");
                         continue;
                     }
 
-                    LogProgress($"Applying overwrite START [{i + 1}/{overwrites.Count}] Channel={channel.Name} Role={role.Name}");
+                    LogInfo($"Applying overwrite START Channel={channel.Name} Role={role.Name} ({role.Id}) [{index}/{overwrites.Count}]");
 
                     var permissions = new OverwritePermissions(
                         allowValue: overwrite.AllowValue,
@@ -610,38 +854,104 @@ namespace DiscordAiModeration.Bot.Services
 
                     await channel.AddPermissionOverwriteAsync(role, permissions);
 
-                    LogProgress($"Applying overwrite DONE [{i + 1}/{overwrites.Count}] Channel={channel.Name} Role={role.Name}");
+                    LogInfo($"Applying overwrite DONE Channel={channel.Name} Role={role.Name} ({role.Id}) [{index}/{overwrites.Count}]");
+                    await Task.Delay(250);
                 }
                 catch (Exception ex)
                 {
-                    LogError(ex, $"Failed to apply overwrite for original role {overwrite.RoleOriginalId} on channel {channel.Name}");
+                    _logger.LogWarning(ex, "Failed to apply overwrite for role {RoleId}", overwrite.RoleOriginalId);
+                    Console.WriteLine($"[GuildConfigurationService] Failed to apply overwrite for original role {overwrite.RoleOriginalId}: {ex}");
                 }
             }
         }
 
-        private void LogProgress(string message)
+        private async Task<T> RunWithHeartbeatAndTimeoutAsync<T>(
+            Func<Task<T>> action,
+            string operationName,
+            int heartbeatMs,
+            int timeoutMs)
         {
-            var finalMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [GuildConfigurationService] {message}";
-            Console.WriteLine(finalMessage);
-            _logger.LogInformation("{Message}", message);
+            var task = action();
+            var startedUtc = DateTime.UtcNow;
+
+            while (!task.IsCompleted)
+            {
+                var completed = await Task.WhenAny(task, Task.Delay(heartbeatMs));
+                if (completed == task)
+                {
+                    break;
+                }
+
+                var elapsed = DateTime.UtcNow - startedUtc;
+                LogInfo($"Still waiting for operation: {operationName} Elapsed={elapsed.TotalSeconds:F0}s");
+
+                if (elapsed.TotalMilliseconds >= timeoutMs)
+                {
+                    throw new TimeoutException(
+                        $"TIMEOUT waiting for operation: {operationName} after {elapsed.TotalSeconds:F0}s");
+                }
+            }
+
+            return await task;
         }
 
-        private void LogError(Exception ex, string message)
+        private async Task RunWithHeartbeatAndTimeoutAsync(
+            Func<Task> action,
+            string operationName,
+            int heartbeatMs,
+            int timeoutMs)
         {
-            var finalMessage = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [GuildConfigurationService] ERROR {message}";
-            Console.WriteLine(finalMessage);
-            Console.WriteLine(ex.ToString());
-            _logger.LogError(ex, "{Message}", message);
+            var task = action();
+            var startedUtc = DateTime.UtcNow;
+
+            while (!task.IsCompleted)
+            {
+                var completed = await Task.WhenAny(task, Task.Delay(heartbeatMs));
+                if (completed == task)
+                {
+                    break;
+                }
+
+                var elapsed = DateTime.UtcNow - startedUtc;
+                LogInfo($"Still waiting for operation: {operationName} Elapsed={elapsed.TotalSeconds:F0}s");
+
+                if (elapsed.TotalMilliseconds >= timeoutMs)
+                {
+                    throw new TimeoutException(
+                        $"TIMEOUT waiting for operation: {operationName} after {elapsed.TotalSeconds:F0}s");
+                }
+            }
+
+            await task;
+        }
+
+        private bool HasAdministratorPermission(RoleConfigurationBackup role)
+        {
+            return new GuildPermissions(role.PermissionsRawValue).Administrator;
         }
 
         private async Task SafeErrorResponseAsync(SocketSlashCommand command, string message)
         {
             try
             {
-                if (command.HasResponded) await command.FollowupAsync(message, ephemeral: true);
-                else await command.RespondAsync(message, ephemeral: true);
+                if (command.HasResponded)
+                {
+                    await command.FollowupAsync(message, ephemeral: true);
+                }
+                else
+                {
+                    await command.RespondAsync(message, ephemeral: true);
+                }
             }
-            catch { }
+            catch
+            {
+            }
+        }
+
+        private void LogInfo(string message)
+        {
+            _logger.LogInformation(message);
+            Console.WriteLine($"[GuildConfigurationService] {message}");
         }
 
         private static string SanitizeFileName(string value)
@@ -680,7 +990,7 @@ namespace DiscordAiModeration.Bot.Services
         public string ChannelKind { get; set; } = string.Empty;
         public int Position { get; set; }
         public ulong? ParentCategoryOriginalId { get; set; }
-        public string Topic { get; set; }
+        public string? Topic { get; set; }
         public bool IsNsfw { get; set; }
         public int SlowModeSeconds { get; set; }
         public int? Bitrate { get; set; }
