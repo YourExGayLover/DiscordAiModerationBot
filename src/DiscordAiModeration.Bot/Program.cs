@@ -58,6 +58,8 @@ builder.Services.AddTransient<IAiModerationService, AiModerationService>();
 builder.Services.AddSingleton<IDatabase, SqliteDatabase>();
 builder.Services.AddSingleton<ModerationQueue>();
 builder.Services.AddSingleton<BotService>();
+
+builder.Services.AddSingleton<GuildConfigurationService>();
 builder.Services.AddHostedService<DiscordWorker>();
 
 var host = builder.Build();

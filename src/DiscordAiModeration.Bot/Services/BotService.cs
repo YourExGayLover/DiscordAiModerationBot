@@ -18,18 +18,21 @@ public sealed class BotService
     private readonly ModerationQueue _moderationQueue;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<BotService> _logger;
+    private readonly GuildConfigurationService _guildConfigurationService;
 
     public BotService(
         DiscordSocketClient discordClient,
         IDatabase database,
         ModerationQueue moderationQueue,
         IHttpClientFactory httpClientFactory,
+        GuildConfigurationService guildConfigurationService,
         ILogger<BotService> logger)
     {
         _discordClient = discordClient;
         _database = database;
         _moderationQueue = moderationQueue;
         _httpClientFactory = httpClientFactory;
+        _guildConfigurationService = guildConfigurationService;
         _logger = logger;
     }
 
@@ -178,16 +181,28 @@ public sealed class BotService
             .WithDescription("Role audit tools")
             .AddOption(BuildRoleAuditSubCommand());
 
+        var backupConfigurationCommand = new SlashCommandBuilder()
+    .WithName("backupconfiguration")
+    .WithDescription("Back up channels and roles from this server or another server the bot is in")
+    .AddOption("source_server_id", ApplicationCommandOptionType.String, "Optional source server ID to copy from", false);
+
+        var loadConfigurationCommand = new SlashCommandBuilder()
+            .WithName("loadconfiguration")
+            .WithDescription("Load a previously saved channel/role configuration JSON into this server")
+            .AddOption("filename", ApplicationCommandOptionType.String, "Backup filename to load", true);
+
         try
         {
             foreach (var guild in _discordClient.Guilds)
             {
                 await guild.BulkOverwriteApplicationCommandAsync(new ApplicationCommandProperties[]
                 {
-                    modConfigCommand.Build(),
-                    rulesCommand.Build(),
-                    reviewCommand.Build(),
-                    rolesCommand.Build()
+    modConfigCommand.Build(),
+    rulesCommand.Build(),
+    reviewCommand.Build(),
+    rolesCommand.Build(),
+    backupConfigurationCommand.Build(),
+    loadConfigurationCommand.Build()
                 });
 
                 _logger.LogInformation(
@@ -598,6 +613,12 @@ public sealed class BotService
                     break;
                 case "roles":
                     await HandleRolesAsync(command, guildId);
+                    break;
+                case "backupconfiguration":
+                    await _guildConfigurationService.BackupConfigurationAsync(command);
+                    break;
+                case "loadconfiguration":
+                    await _guildConfigurationService.LoadConfigurationAsync(command);
                     break;
                 default:
                     await command.RespondAsync("Unknown command.", ephemeral: true);
