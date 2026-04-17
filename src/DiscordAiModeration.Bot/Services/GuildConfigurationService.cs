@@ -193,7 +193,7 @@ namespace DiscordAiModeration.Bot.Services
                 var roleIdMap = new Dictionary<ulong, ulong>();
                 var createdRoles = new List<(ulong OriginalId, ulong NewId, int SourcePosition)>();
 
-                foreach (var roleBackup in backup.Roles.OrderBy(x => x.Position))
+                foreach (var roleBackup in backup.Roles.OrderByDescending(x => x.Position))
                 {
                     try
                     {
@@ -467,17 +467,17 @@ namespace DiscordAiModeration.Bot.Services
         {
             return guild.Roles
                 .Where(r => r.Id != guild.EveryoneRole.Id && !r.IsManaged)
-                .OrderBy(r => r.Position)
-                .Select(r => new RoleConfigurationBackup
-                {
-                    OriginalId = r.Id,
-                    Name = r.Name,
-                    ColorRawValue = r.Color.RawValue,
-                    IsHoisted = r.IsHoisted,
-                    IsMentionable = r.IsMentionable,
-                    PermissionsRawValue = r.Permissions.RawValue,
-                    Position = r.Position
-                })
+.OrderByDescending(r => r.Position)
+.Select(r => new RoleConfigurationBackup
+{
+    OriginalId = r.Id,
+    Name = r.Name,
+    ColorRawValue = r.Color.RawValue,
+    IsHoisted = r.IsHoisted,
+    IsMentionable = r.IsMentionable,
+    PermissionsRawValue = r.Permissions.RawValue,
+    Position = r.Position
+})
                 .ToList();
         }
 
