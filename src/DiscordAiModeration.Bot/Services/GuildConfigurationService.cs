@@ -71,7 +71,7 @@ namespace DiscordAiModeration.Bot.Services
 
                 var backup = new GuildConfigurationBackup
                 {
-                    Version = 1,
+                    Version = 3,
                     ExportedAtUtc = DateTime.UtcNow,
                     SourceGuildId = sourceGuild.Id,
                     SourceGuildName = sourceGuild.Name,
@@ -170,12 +170,28 @@ namespace DiscordAiModeration.Bot.Services
                     return;
                 }
 
-                var roleIdMap = new Dictionary<ulong, ulong>
-                {
-                    [backup.SourceGuildId] = targetGuild.EveryoneRole.Id
-                };
+                var preservedChannelIds = new HashSet<ulong>();
+                ulong? preservedParentCategoryId = null;
 
-                var createdRoles = new List<(ulong RoleId, int Position)>();
+                if (command.Channel is SocketGuildChannel currentChannel)
+                {
+                    preservedChannelIds.Add(currentChannel.Id);
+
+                    if (currentChannel is SocketTextChannel currentText && currentText.Category != null)
+                    {
+                        preservedParentCategoryId = currentText.Category.Id;
+                    }
+                    else if (currentChannel is SocketVoiceChannel currentVoice && currentVoice.Category != null)
+                    {
+                        preservedParentCategoryId = currentVoice.Category.Id;
+                    }
+                }
+
+                await DeleteExistingChannelsAsync(targetGuild, preservedChannelIds, preservedParentCategoryId);
+                await DeleteExistingRolesAsync(targetGuild, me);
+
+                var roleIdMap = new Dictionary<ulong, ulong>();
+                var createdRoles = new List<(ulong OriginalId, ulong NewId, int SourcePosition)>();
 
                 foreach (var roleBackup in backup.Roles.OrderBy(x => x.Position))
                 {
@@ -189,7 +205,7 @@ namespace DiscordAiModeration.Bot.Services
                             roleBackup.IsMentionable);
 
                         roleIdMap[roleBackup.OriginalId] = createdRole.Id;
-                        createdRoles.Add((createdRole.Id, roleBackup.Position));
+                        createdRoles.Add((roleBackup.OriginalId, createdRole.Id, roleBackup.Position));
                     }
                     catch (Exception ex)
                     {
@@ -197,29 +213,13 @@ namespace DiscordAiModeration.Bot.Services
                     }
                 }
 
-                if (createdRoles.Count > 0)
-                {
-                    try
-                    {
-                        var reorderList = createdRoles
-                            .Select(x => new ReorderRoleProperties(x.RoleId, x.Position))
-                            .ToList();
-
-                        if (reorderList.Count > 0)
-                        {
-                            await targetGuild.ReorderRolesAsync(reorderList);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to reorder roles in guild {GuildId}", targetGuild.Id);
-                    }
-                }
+                await ReorderCreatedRolesAsync(targetGuild, createdRoles);
 
                 var createdCategoryMap = new Dictionary<ulong, ulong>();
+                var createdChannelMap = new Dictionary<ulong, IGuildChannel>();
 
                 foreach (var categoryBackup in backup.Channels
-                             .Where(x => x.ChannelType == SavedChannelType.Category)
+                             .Where(x => string.Equals(x.ChannelKind, "category", StringComparison.OrdinalIgnoreCase))
                              .OrderBy(x => x.Position))
                 {
                     try
@@ -238,6 +238,7 @@ namespace DiscordAiModeration.Bot.Services
                             roleIdMap);
 
                         createdCategoryMap[categoryBackup.OriginalId] = createdCategory.Id;
+                        createdChannelMap[categoryBackup.OriginalId] = createdCategory;
                     }
                     catch (Exception ex)
                     {
@@ -246,80 +247,70 @@ namespace DiscordAiModeration.Bot.Services
                 }
 
                 foreach (var channelBackup in backup.Channels
-                             .Where(x => x.ChannelType != SavedChannelType.Category)
+                             .Where(x => !string.Equals(x.ChannelKind, "category", StringComparison.OrdinalIgnoreCase))
                              .OrderBy(x => x.Position))
                 {
                     try
                     {
-                        switch (channelBackup.ChannelType)
+                        IGuildChannel? createdChannel = null;
+
+                        if (string.Equals(channelBackup.ChannelKind, "voice", StringComparison.OrdinalIgnoreCase))
                         {
-                            case SavedChannelType.Text:
+                            var createdVoice = await targetGuild.CreateVoiceChannelAsync(channelBackup.Name);
+
+                            await createdVoice.ModifyAsync(props =>
+                            {
+                                if (channelBackup.Bitrate.HasValue)
                                 {
-                                    var createdText = await targetGuild.CreateTextChannelAsync(channelBackup.Name);
-
-                                    await createdText.ModifyAsync(props =>
-                                    {
-                                        props.Topic = channelBackup.Topic;
-                                        props.SlowModeInterval = channelBackup.SlowModeSeconds;
-
-                                        if (channelBackup.ParentCategoryOriginalId.HasValue &&
-                                            createdCategoryMap.TryGetValue(channelBackup.ParentCategoryOriginalId.Value, out var parentCategoryId))
-                                        {
-                                            props.CategoryId = parentCategoryId;
-                                        }
-
-                                        props.Position = channelBackup.Position;
-                                    });
-
-                                    await ApplyRolePermissionOverwritesAsync(
-                                        createdText,
-                                        channelBackup.PermissionOverwrites,
-                                        targetGuild,
-                                        roleIdMap);
-
-                                    break;
+                                    props.Bitrate = channelBackup.Bitrate.Value;
                                 }
 
-                            case SavedChannelType.Voice:
+                                if (channelBackup.UserLimit.HasValue)
                                 {
-                                    var createdVoice = await targetGuild.CreateVoiceChannelAsync(channelBackup.Name);
-
-                                    await createdVoice.ModifyAsync(props =>
-                                    {
-                                        if (channelBackup.Bitrate.HasValue)
-                                        {
-                                            props.Bitrate = channelBackup.Bitrate.Value;
-                                        }
-
-                                        if (channelBackup.UserLimit.HasValue)
-                                        {
-                                            props.UserLimit = channelBackup.UserLimit.Value;
-                                        }
-
-                                        if (channelBackup.ParentCategoryOriginalId.HasValue &&
-                                            createdCategoryMap.TryGetValue(channelBackup.ParentCategoryOriginalId.Value, out var parentCategoryId))
-                                        {
-                                            props.CategoryId = parentCategoryId;
-                                        }
-
-                                        props.Position = channelBackup.Position;
-                                    });
-
-                                    await ApplyRolePermissionOverwritesAsync(
-                                        createdVoice,
-                                        channelBackup.PermissionOverwrites,
-                                        targetGuild,
-                                        roleIdMap);
-
-                                    break;
+                                    props.UserLimit = channelBackup.UserLimit.Value;
                                 }
 
-                            default:
-                                _logger.LogInformation(
-                                    "Skipping unsupported channel type {ChannelType} for channel {ChannelName}",
-                                    channelBackup.ChannelType,
-                                    channelBackup.Name);
-                                break;
+                                props.Position = channelBackup.Position;
+                            });
+
+                            await ApplyRolePermissionOverwritesAsync(
+                                createdVoice,
+                                channelBackup.PermissionOverwrites,
+                                targetGuild,
+                                roleIdMap);
+
+                            createdChannel = createdVoice;
+                        }
+                        else if (string.Equals(channelBackup.ChannelKind, "text", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var createdText = await targetGuild.CreateTextChannelAsync(channelBackup.Name);
+
+                            await createdText.ModifyAsync(props =>
+                            {
+                                props.Topic = channelBackup.Topic;
+                                props.SlowModeInterval = channelBackup.SlowModeSeconds;
+                                props.Position = channelBackup.Position;
+                            });
+
+                            await ApplyRolePermissionOverwritesAsync(
+                                createdText,
+                                channelBackup.PermissionOverwrites,
+                                targetGuild,
+                                roleIdMap);
+
+                            createdChannel = createdText;
+                        }
+                        else
+                        {
+                            _logger.LogInformation(
+                                "Skipping unsupported saved channel kind {ChannelKind} for channel {ChannelName}",
+                                channelBackup.ChannelKind,
+                                channelBackup.Name);
+                        }
+
+                        if (createdChannel != null)
+                        {
+                            createdChannelMap[channelBackup.OriginalId] = createdChannel;
                         }
                     }
                     catch (Exception ex)
@@ -328,14 +319,147 @@ namespace DiscordAiModeration.Bot.Services
                     }
                 }
 
+                foreach (var channelBackup in backup.Channels
+                             .Where(x => !string.Equals(x.ChannelKind, "category", StringComparison.OrdinalIgnoreCase))
+                             .Where(x => x.ParentCategoryOriginalId.HasValue))
+                {
+                    try
+                    {
+                        if (!createdChannelMap.TryGetValue(channelBackup.OriginalId, out var createdChannel))
+                        {
+                            continue;
+                        }
+
+                        if (!createdCategoryMap.TryGetValue(channelBackup.ParentCategoryOriginalId!.Value, out var parentCategoryId))
+                        {
+                            continue;
+                        }
+
+                        if (createdChannel is SocketTextChannel textChannel)
+                        {
+                            await textChannel.ModifyAsync(props => props.CategoryId = parentCategoryId);
+                        }
+                        else if (createdChannel is SocketVoiceChannel voiceChannel)
+                        {
+                            await voiceChannel.ModifyAsync(props => props.CategoryId = parentCategoryId);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to assign category for channel {ChannelName}", channelBackup.Name);
+                    }
+                }
+
                 await command.FollowupAsync(
-                    $"Loaded configuration from `{filename}` into **{targetGuild.Name}**.",
+                    $"Loaded configuration from `{filename}` into **{targetGuild.Name}**. Existing roles and channels were cleared first, except the channel used to run the command.",
                     ephemeral: true);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error while loading guild configuration.");
                 await SafeErrorResponseAsync(command, "An error occurred while loading the configuration.");
+            }
+        }
+
+        private async Task DeleteExistingChannelsAsync(
+            SocketGuild guild,
+            HashSet<ulong> preservedChannelIds,
+            ulong? preservedParentCategoryId)
+        {
+            var channels = guild.Channels.ToList();
+
+            foreach (var channel in channels
+                         .Where(c => c is not SocketCategoryChannel)
+                         .OrderByDescending(c => c.Position))
+            {
+                if (preservedChannelIds.Contains(channel.Id))
+                {
+                    _logger.LogInformation("Preserving current command channel {ChannelName} ({ChannelId})", channel.Name, channel.Id);
+                    continue;
+                }
+
+                try
+                {
+                    await channel.DeleteAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete channel {ChannelName} ({ChannelId})", channel.Name, channel.Id);
+                }
+            }
+
+            foreach (var category in channels
+                         .OfType<SocketCategoryChannel>()
+                         .OrderByDescending(c => c.Position))
+            {
+                if (preservedParentCategoryId.HasValue && category.Id == preservedParentCategoryId.Value)
+                {
+                    _logger.LogInformation("Preserving category containing the command channel {ChannelName} ({ChannelId})", category.Name, category.Id);
+                    continue;
+                }
+
+                try
+                {
+                    await category.DeleteAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete category {ChannelName} ({ChannelId})", category.Name, category.Id);
+                }
+            }
+        }
+
+        private async Task DeleteExistingRolesAsync(SocketGuild guild, SocketGuildUser me)
+        {
+            var protectedRoleIds = new HashSet<ulong>(me.Roles.Select(r => r.Id)) { guild.EveryoneRole.Id };
+
+            var rolesToDelete = guild.Roles
+                .Where(role => !protectedRoleIds.Contains(role.Id))
+                .Where(role => !role.IsManaged)
+                .Where(role => role.Position < me.Hierarchy)
+                .OrderByDescending(role => role.Position)
+                .ToList();
+
+            foreach (var role in rolesToDelete)
+            {
+                try
+                {
+                    await role.DeleteAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete role {RoleName} ({RoleId})", role.Name, role.Id);
+                }
+            }
+        }
+
+        private async Task ReorderCreatedRolesAsync(
+            SocketGuild guild,
+            List<(ulong OriginalId, ulong NewId, int SourcePosition)> createdRoles)
+        {
+            if (createdRoles.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var sortedBySource = createdRoles
+                    .OrderBy(x => x.SourcePosition)
+                    .ToList();
+
+                var reorderList = new List<ReorderRoleProperties>();
+
+                for (var i = 0; i < sortedBySource.Count; i++)
+                {
+                    reorderList.Add(new ReorderRoleProperties(sortedBySource[i].NewId, i + 1));
+                }
+
+                await guild.ReorderRolesAsync(reorderList);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to reorder created roles in guild {GuildId}", guild.Id);
             }
         }
 
@@ -363,7 +487,6 @@ namespace DiscordAiModeration.Bot.Services
 
             foreach (var channel in guild.Channels.OrderBy(c => c.Position))
             {
-                // Skip thread channels completely
                 if (channel is SocketThreadChannel)
                 {
                     continue;
@@ -375,27 +498,9 @@ namespace DiscordAiModeration.Bot.Services
                     {
                         OriginalId = categoryChannel.Id,
                         Name = categoryChannel.Name,
-                        ChannelType = SavedChannelType.Category,
+                        ChannelKind = "category",
                         Position = categoryChannel.Position,
                         PermissionOverwrites = BuildPermissionOverwrites(categoryChannel)
-                    });
-
-                    continue;
-                }
-
-                if (channel is SocketTextChannel textChannel)
-                {
-                    channels.Add(new ChannelConfigurationBackup
-                    {
-                        OriginalId = textChannel.Id,
-                        Name = textChannel.Name,
-                        ChannelType = SavedChannelType.Text,
-                        Position = textChannel.Position,
-                        ParentCategoryOriginalId = textChannel.Category?.Id,
-                        Topic = textChannel.Topic,
-                        IsNsfw = textChannel.IsNsfw,
-                        SlowModeSeconds = textChannel.SlowModeInterval,
-                        PermissionOverwrites = BuildPermissionOverwrites(textChannel)
                     });
 
                     continue;
@@ -407,12 +512,30 @@ namespace DiscordAiModeration.Bot.Services
                     {
                         OriginalId = voiceChannel.Id,
                         Name = voiceChannel.Name,
-                        ChannelType = SavedChannelType.Voice,
+                        ChannelKind = "voice",
                         Position = voiceChannel.Position,
                         ParentCategoryOriginalId = voiceChannel.Category?.Id,
                         Bitrate = voiceChannel.Bitrate,
                         UserLimit = voiceChannel.UserLimit,
                         PermissionOverwrites = BuildPermissionOverwrites(voiceChannel)
+                    });
+
+                    continue;
+                }
+
+                if (channel is SocketTextChannel textChannel)
+                {
+                    channels.Add(new ChannelConfigurationBackup
+                    {
+                        OriginalId = textChannel.Id,
+                        Name = textChannel.Name,
+                        ChannelKind = "text",
+                        Position = textChannel.Position,
+                        ParentCategoryOriginalId = textChannel.Category?.Id,
+                        Topic = textChannel.Topic,
+                        IsNsfw = textChannel.IsNsfw,
+                        SlowModeSeconds = textChannel.SlowModeInterval,
+                        PermissionOverwrites = BuildPermissionOverwrites(textChannel)
                     });
 
                     continue;
@@ -427,6 +550,7 @@ namespace DiscordAiModeration.Bot.Services
 
             return channels;
         }
+
         private List<PermissionOverwriteBackup> BuildPermissionOverwrites(SocketGuildChannel channel)
         {
             var list = new List<PermissionOverwriteBackup>();
@@ -453,6 +577,7 @@ namespace DiscordAiModeration.Bot.Services
 
             return list;
         }
+
         private async Task ApplyRolePermissionOverwritesAsync(
             IGuildChannel channel,
             List<PermissionOverwriteBackup> overwrites,
@@ -538,7 +663,7 @@ namespace DiscordAiModeration.Bot.Services
     {
         public ulong OriginalId { get; set; }
         public string Name { get; set; } = string.Empty;
-        public SavedChannelType ChannelType { get; set; }
+        public string ChannelKind { get; set; } = string.Empty;
         public int Position { get; set; }
         public ulong? ParentCategoryOriginalId { get; set; }
         public string? Topic { get; set; }
@@ -554,12 +679,5 @@ namespace DiscordAiModeration.Bot.Services
         public ulong RoleOriginalId { get; set; }
         public ulong AllowValue { get; set; }
         public ulong DenyValue { get; set; }
-    }
-
-    public enum SavedChannelType
-    {
-        Category = 0,
-        Text = 1,
-        Voice = 2
     }
 }
