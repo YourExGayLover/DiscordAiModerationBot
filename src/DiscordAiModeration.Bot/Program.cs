@@ -19,7 +19,7 @@ builder.Logging.AddSimpleConsole(options =>
 });
 
 // Use standard .NET logging configuration from appsettings / environment variables.
-builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
+//builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
 
 builder.Services.Configure<AiProviderOptions>(options =>
 {
