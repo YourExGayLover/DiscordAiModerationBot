@@ -28,7 +28,7 @@ public sealed class GuildAdminConsoleService
 
         var backup = new GuildConfigurationBackup
         {
-            Version = 1,
+            Version = 2,
             ExportedAtUtc = DateTime.UtcNow,
             SourceGuildId = guild.Id,
             SourceGuildName = guild.Name,
@@ -42,6 +42,7 @@ public sealed class GuildAdminConsoleService
 
         var json = JsonSerializer.Serialize(backup, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(path, json);
+
         Log($"Backup complete: {path}");
         return path;
     }
@@ -76,8 +77,9 @@ public sealed class GuildAdminConsoleService
         var roleIdMap = new Dictionary<ulong, ulong>();
         var createdRoles = new List<(RoleConfigurationBackup Backup, ulong NewId)>();
 
-        foreach (var roleBackup in backup.Roles.OrderBy(r => HasAdministratorPermission(r) ? 1 : 0)
-                                              .ThenByDescending(r => r.Position))
+        foreach (var roleBackup in backup.Roles
+                     .OrderBy(r => HasAdministratorPermission(r) ? 1 : 0)
+                     .ThenByDescending(r => r.Position))
         {
             var createdRole = await CreateRoleWithRetriesAsync(guild, roleBackup);
             roleIdMap[roleBackup.OriginalId] = createdRole.Id;
