@@ -19,11 +19,27 @@ public static class ViewerEndpoints
         app.MapGet("/api/guilds", (DiscordSocketClient client, DiscordViewerState state) =>
             Results.Ok(state.GetGuilds(client)));
 
-        app.MapGet("/api/channels", (ulong? guildId, DiscordSocketClient client, DiscordViewerState state) =>
-            Results.Ok(state.GetChannels(client, guildId)));
+        app.MapGet("/api/channels", (string? guildId, DiscordSocketClient client, DiscordViewerState state) =>
+        {
+            ulong? parsedGuildId = null;
 
-        app.MapGet("/api/channels/{channelId}/messages", (ulong channelId, DiscordViewerState state) =>
-            Results.Ok(state.GetMessages(channelId)));
+            if (!string.IsNullOrWhiteSpace(guildId) && ulong.TryParse(guildId, out var parsed))
+            {
+                parsedGuildId = parsed;
+            }
+
+            return Results.Ok(state.GetChannels(client, parsedGuildId));
+        });
+
+        app.MapGet("/api/channels/{channelId}/messages", (string channelId, DiscordViewerState state) =>
+        {
+            if (!ulong.TryParse(channelId, out var parsedChannelId))
+            {
+                return Results.BadRequest("Invalid channel id.");
+            }
+
+            return Results.Ok(state.GetMessages(parsedChannelId));
+        });
 
         return app;
     }

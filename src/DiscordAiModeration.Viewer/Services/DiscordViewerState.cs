@@ -27,10 +27,10 @@ public sealed class DiscordViewerState
 
         return guilds
             .OrderBy(x => x.Name)
-            .Select(g => new GuildSummaryDto(
-                g.Id,
-                g.Name,
-                g.TextChannels.Count))
+.Select(g => new GuildSummaryDto(
+    g.Id.ToString(),
+    g.Name,
+    g.TextChannels.Count))
             .ToList();
     }
 
@@ -49,13 +49,13 @@ public sealed class DiscordViewerState
         }
 
         return guilds
-            .SelectMany(g => g.TextChannels.Select(c => new ChannelSummaryDto(
-                c.Id,
-                c.Name,
-                g.Id,
-                g.Name,
-                c.Position,
-                _messagesByChannel.TryGetValue(c.Id, out var q) ? q.Count : 0)))
+.SelectMany(g => g.TextChannels.Select(c => new ChannelSummaryDto(
+    c.Id.ToString(),
+    c.Name,
+    g.Id.ToString(),
+    g.Name,
+    c.Position,
+    _messagesByChannel.TryGetValue(c.Id, out var q) ? q.Count : 0)))
             .OrderBy(x => x.GuildName)
             .ThenBy(x => x.Position)
             .ThenBy(x => x.Name)
@@ -105,9 +105,9 @@ public sealed class DiscordViewerState
             : Array.Empty<AttachmentDto>();
 
         return new MessageDto(
-            message.Id,
-            channelId,
-            message.Author.Id,
+            message.Id.ToString(),
+            channelId.ToString(),
+            message.Author.Id.ToString(),
             message.Author.GlobalName ?? message.Author.Username,
             message.Content,
             message.Timestamp,
