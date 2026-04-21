@@ -121,14 +121,42 @@ public sealed class DiscordViewerState
             : Array.Empty<AttachmentDto>();
 
         var avatarUrl = message.Author.GetDisplayAvatarUrl(size: 64) ?? message.Author.GetDefaultAvatarUrl();
+        var content = message.Content;
 
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            var embedText = message.Embeds
+                .Select(e =>
+                {
+                    var parts = new List<string>();
+
+                    if (!string.IsNullOrWhiteSpace(e.Title))
+                        parts.Add(e.Title);
+
+                    if (!string.IsNullOrWhiteSpace(e.Description))
+                        parts.Add(e.Description);
+
+                    if (e.Fields != null)
+                    {
+                        foreach (var field in e.Fields)
+                        {
+                            parts.Add($"{field.Name}: {field.Value}");
+                        }
+                    }
+
+                    return string.Join("\n", parts);
+                })
+                .Where(x => !string.IsNullOrWhiteSpace(x));
+
+            content = string.Join("\n\n", embedText);
+        }
         return new MessageDto(
             message.Id.ToString(),
             channelId.ToString(),
             message.Author.Id.ToString(),
             message.Author.GlobalName ?? message.Author.Username,
             avatarUrl,
-            message.Content,
+            content,
             message.Timestamp,
             message.Author.IsBot,
             attachments);
