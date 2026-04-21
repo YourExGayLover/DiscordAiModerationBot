@@ -1,3 +1,4 @@
+
 :root {
     --bg: #1e1f22;
     --panel: #2b2d31;
@@ -19,14 +20,15 @@
 
 html, body {
     margin: 0;
-    min-height: 100%;
+    height: 100%;
     background: var(--bg);
     color: var(--text);
     font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 body {
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
 }
 
 button,
@@ -65,9 +67,19 @@ input {
 }
 
 .app-shell {
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
     display: grid;
     grid-template-columns: 72px 320px minmax(0, 1fr) 280px;
+}
+
+.guild-rail,
+.channel-sidebar,
+.chat-panel,
+.inspector {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .guild-rail {
@@ -90,6 +102,7 @@ input {
     font-weight: 700;
     transition: 150ms ease;
     overflow: hidden;
+    flex: 0 0 auto;
 }
 
 .brand {
@@ -103,6 +116,10 @@ input {
     gap: 10px;
     width: 100%;
     align-items: center;
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+    padding-right: 2px;
 }
 
 .guild-pill {
@@ -128,10 +145,11 @@ input {
 .inspector {
     background: var(--panel);
     border-right: 1px solid var(--border);
-    min-width: 0;
 }
 
-.channel-sidebar {
+.channel-sidebar,
+.inspector,
+.chat-panel {
     display: flex;
     flex-direction: column;
 }
@@ -141,6 +159,8 @@ input {
 .inspector-header {
     padding: 18px 20px;
     border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+    background: inherit;
 }
 
 .channel-sidebar-header,
@@ -149,6 +169,13 @@ input {
     justify-content: space-between;
     align-items: center;
     gap: 12px;
+}
+
+.chat-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--panel-alt);
 }
 
 .guild-name,
@@ -172,11 +199,19 @@ input {
 .sidebar-tools {
     padding: 14px 16px;
     border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+}
+
+.channel-groups,
+.inspector-content,
+.messages {
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .channel-groups {
     padding: 10px;
-    overflow: auto;
+    flex: 1 1 auto;
 }
 
 .channel-group {
@@ -244,9 +279,6 @@ input {
 
 .chat-panel {
     background: var(--panel-alt);
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
 }
 
 .chat-actions {
@@ -256,10 +288,10 @@ input {
 
 .messages {
     padding: 16px 20px 28px;
-    overflow: auto;
     display: flex;
     flex-direction: column;
     gap: 2px;
+    flex: 1 1 auto;
 }
 
 .message-card {
@@ -358,40 +390,17 @@ input {
 .attachment-name {
     font-size: 13px;
     font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .attachment-size {
     margin-top: 4px;
-    color: var(--muted);
     font-size: 12px;
-}
-
-.empty-state {
-    margin: auto;
-    max-width: 420px;
-    text-align: center;
-    padding: 30px 20px;
-}
-
-.empty-title {
-    font-size: 22px;
-    font-weight: 700;
-    margin-bottom: 8px;
-}
-
-.inspector {
-    padding: 0;
-    display: flex;
-    flex-direction: column;
+    color: var(--muted);
 }
 
 .inspector-content {
     padding: 16px;
-    display: grid;
-    gap: 12px;
+    flex: 1 1 auto;
 }
 
 .inspector-card {
@@ -399,20 +408,32 @@ input {
     border: 1px solid var(--border);
     border-radius: 14px;
     padding: 14px;
+    margin-bottom: 12px;
 }
 
 .inspector-value {
-    margin-top: 4px;
+    margin-top: 6px;
+    font-size: 14px;
     word-break: break-word;
 }
 
+.empty-state {
+    padding: 32px 12px;
+}
+
+.empty-title {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
 .icon-button {
-    width: 38px;
-    height: 38px;
+    width: 42px;
+    height: 42px;
     padding: 0;
 }
 
-@media (max-width: 1320px) {
+@media (max-width: 1200px) {
     .app-shell {
         grid-template-columns: 72px 280px minmax(0, 1fr);
     }
@@ -422,35 +443,12 @@ input {
     }
 }
 
-@media (max-width: 920px) {
+@media (max-width: 900px) {
     .app-shell {
-        grid-template-columns: 72px minmax(0, 1fr);
+        grid-template-columns: 72px 1fr;
     }
 
     .channel-sidebar {
         display: none;
-    }
-}
-
-@media (max-width: 680px) {
-    .app-shell {
-        grid-template-columns: 1fr;
-    }
-
-    .guild-rail {
-        display: none;
-    }
-
-    .chat-header {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .chat-actions {
-        justify-content: stretch;
-    }
-
-    .chat-actions > button {
-        flex: 1;
     }
 }

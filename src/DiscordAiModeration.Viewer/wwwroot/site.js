@@ -74,12 +74,25 @@ function setMessageMeta() {
         return;
     }
 
-    meta.textContent = `${loadedMessages.length} loaded • newest first${hasMoreMessages ? ' • older pages available' : ''}`;
+    meta.textContent = `${loadedMessages.length} loaded • newest at bottom${hasMoreMessages ? ' • older pages available' : ''}`;
 }
 
 function updateLoadOlderButton() {
     const button = document.getElementById('loadOlderButton');
     button.disabled = !selectedChannelId || !hasMoreMessages || !nextBeforeMessageId;
+}
+
+function getMessageScrollHost() {
+    return document.getElementById('messages');
+}
+
+function isNearBottom(container, threshold = 48) {
+    return container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
+}
+
+function scrollMessagesToBottom() {
+    const container = getMessageScrollHost();
+    container.scrollTop = container.scrollHeight;
 }
 
 async function loadStatus() {
@@ -199,7 +212,7 @@ function renderChannels() {
                 hasMoreMessages = false;
                 document.getElementById('currentChannel').textContent = `# ${channel.name}`;
                 renderChannels();
-                await loadMessages(true);
+                await loadMessages(true, { scrollMode: 'bottom' });
             };
 
             section.append(button);
@@ -252,13 +265,13 @@ function createAttachment(attachment) {
 }
 
 function renderMessages(messages) {
-    const host = document.getElementById('messages');
+    const host = getMessageScrollHost();
     host.innerHTML = '';
 
     if (!selectedChannelId) {
         const state = el('div', 'empty-state');
         state.append(el('div', 'empty-title', 'Open a channel'));
-        state.append(el('div', 'empty-copy', 'Choose a server on the left, then pick a text channel to load the newest messages first.'));
+        state.append(el('div', 'empty-copy', 'Choose a server on the left, then pick a text channel to load the newest messages at the bottom.'));
         host.append(state);
         setMessageMeta();
         setInspector();
@@ -277,7 +290,9 @@ function renderMessages(messages) {
         return;
     }
 
-    for (const message of messages) {
+    const displayMessages = [...messages].reverse();
+
+    for (const message of displayMessages) {
         const card = el('article', 'message-card');
         card.append(createAvatar(message));
 
@@ -318,12 +333,18 @@ function mergeNewestFirst(existing, incoming) {
     return [...map.values()].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 }
 
-async function loadMessages(reset = false) {
+async function loadMessages(reset = false, options = {}) {
     if (!selectedChannelId) {
         loadedMessages = [];
         renderMessages([]);
         return;
     }
+
+    const { scrollMode = 'preserve' } = options;
+    const container = getMessageScrollHost();
+    const wasNearBottom = isNearBottom(container);
+    const previousScrollHeight = container.scrollHeight;
+    const previousScrollTop = container.scrollTop;
 
     const beforePart = !reset && nextBeforeMessageId
         ? `?beforeMessageId=${encodeURIComponent(nextBeforeMessageId)}`
@@ -341,6 +362,17 @@ async function loadMessages(reset = false) {
     nextBeforeMessageId = page.nextBeforeMessageId;
 
     renderMessages(loadedMessages);
+
+    if (reset) {
+        if (scrollMode === 'bottom' || wasNearBottom) {
+            scrollMessagesToBottom();
+        } else {
+            container.scrollTop = previousScrollTop;
+        }
+    } else {
+        const newScrollHeight = container.scrollHeight;
+        container.scrollTop = previousScrollTop + (newScrollHeight - previousScrollHeight);
+    }
 }
 
 async function refreshAll() {
@@ -349,7 +381,7 @@ async function refreshAll() {
     await loadChannels();
 
     if (selectedChannelId) {
-        await loadMessages(true);
+        await loadMessages(true, { scrollMode: 'preserve' });
     } else {
         renderMessages([]);
     }
@@ -362,7 +394,7 @@ function startAutoRefresh() {
 
     refreshTimer = setInterval(() => {
         if (selectedChannelId) {
-            loadMessages(true).catch(() => {});
+            loadMessages(true, { scrollMode: 'preserve' }).catch(() => {});
         }
         loadStatus().catch(() => {});
     }, 5000);
@@ -373,7 +405,7 @@ document.getElementById('refreshAllButton').addEventListener('click', () => {
 });
 
 document.getElementById('refreshButton').addEventListener('click', () => {
-    loadMessages(true).catch(error => setStatus(error.message, true));
+    loadMessages(true, { scrollMode: 'bottom' }).catch(error => setStatus(error.message, true));
 });
 
 document.getElementById('loadOlderButton').addEventListener('click', () => {

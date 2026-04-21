@@ -53,17 +53,20 @@ public sealed class DiscordViewerState
         }
 
         return guilds
-            .SelectMany(g => g.TextChannels.Select(c => new ChannelSummaryDto(
-                c.Id.ToString(),
-                c.Name,
-                g.Id.ToString(),
-                g.Name,
-                c.Category?.Name,
-                c.Position,
-                _liveMessagesByChannel.TryGetValue(c.Id, out var q) ? q.Count : 0)))
-            .OrderBy(x => x.CategoryName ?? "zzzzzzzz")
-            .ThenBy(x => x.Position)
-            .ThenBy(x => x.Name)
+            .SelectMany(g =>
+                g.TextChannels
+                    .OrderBy(c => c.Category is null ? int.MaxValue : c.Category.Position)
+                    .ThenBy(c => c.Category is null ? 1 : 0)
+                    .ThenBy(c => c.Position)
+                    .ThenBy(c => c.Name)
+                    .Select(c => new ChannelSummaryDto(
+                        c.Id.ToString(),
+                        c.Name,
+                        g.Id.ToString(),
+                        g.Name,
+                        c.Category?.Name,
+                        c.Position,
+                        _liveMessagesByChannel.TryGetValue(c.Id, out var q) ? q.Count : 0)))
             .ToList();
     }
 
@@ -85,11 +88,9 @@ public sealed class DiscordViewerState
             .Select(m => ToDto(channelId, m))
             .ToList();
 
-        // Determine paging from the Discord fetch itself, not the merged list.
         var hasMore = fetchedDtos.Count == pageSize;
         var nextBeforeMessageId = fetchedDtos.Count > 0 ? fetchedDtos[^1].Id : null;
 
-        // Only merge live cache into the newest page.
         if (!beforeMessageId.HasValue && _liveMessagesByChannel.TryGetValue(channelId, out var liveQueue))
         {
             fetchedDtos = liveQueue
@@ -123,7 +124,6 @@ public sealed class DiscordViewerState
             : Array.Empty<AttachmentDto>();
 
         var avatarUrl = message.Author.GetDisplayAvatarUrl(size: 64) ?? message.Author.GetDefaultAvatarUrl();
-
         var content = BuildDisplayContent(message, attachments);
 
         return new MessageDto(
@@ -205,29 +205,15 @@ public sealed class DiscordViewerState
         }
 
         var text = input;
-
-        // Remove Discord-style quote markers
-        text = Regex.Replace(text, @"^\s*>\s?", "", RegexOptions.Multiline);
-
-        // Inline code
+        text = Regex.Replace(text, @"^\s*>\s?", string.Empty, RegexOptions.Multiline);
         text = Regex.Replace(text, @"`([^`]+)`", "$1");
-
-        // Bold / italic / underline / strikethrough
         text = Regex.Replace(text, @"\*\*(.*?)\*\*", "$1");
         text = Regex.Replace(text, @"__(.*?)__", "$1");
         text = Regex.Replace(text, @"\*(.*?)\*", "$1");
         text = Regex.Replace(text, @"~~(.*?)~~", "$1");
-
-        // User mentions <@123> or <@!123>
         text = Regex.Replace(text, @"<@!?(\d+)>", "@$1");
-
-        // Role mentions <@&123>
         text = Regex.Replace(text, @"<@&(\d+)>", "@role:$1");
-
-        // Channel mentions <#123>
         text = Regex.Replace(text, @"<#(\d+)>", "#$1");
-
-        // Relative timestamps <t:1776736849:R>
         text = Regex.Replace(text, @"<t:(\d+):R>", match =>
         {
             if (!long.TryParse(match.Groups[1].Value, out var unix))
@@ -255,8 +241,6 @@ public sealed class DiscordViewerState
 
             return $"{(int)diff.TotalDays} days ago";
         });
-
-        // Collapse excessive blank lines
         text = Regex.Replace(text, @"\n{3,}", "\n\n");
 
         return text.Trim();
