@@ -10,6 +10,7 @@ let hasMoreMessages = false;
 let refreshTimer = null;
 let isLoadingMessages = false;
 let isLoadingOlderMessages = false;
+let autoRefreshEnabled = true;
 
 async function getJson(url) {
     const response = await fetch(url);
@@ -40,10 +41,12 @@ function formatBytes(size) {
     const units = ['B', 'KB', 'MB', 'GB'];
     let value = size;
     let unitIndex = 0;
+
     while (value >= 1024 && unitIndex < units.length - 1) {
         value /= 1024;
         unitIndex += 1;
     }
+
     return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
@@ -82,6 +85,7 @@ function setMessageMeta() {
 function updateLoadOlderButton() {
     const button = document.getElementById('loadOlderButton');
     if (!button) return;
+
     button.disabled = !selectedChannelId || !hasMoreMessages || !nextBeforeMessageId;
 }
 
@@ -96,6 +100,41 @@ function isNearBottom(container, threshold = 48) {
 function scrollMessagesToBottom() {
     const container = getMessageScrollHost();
     container.scrollTop = container.scrollHeight;
+}
+
+function ensureAutoRefreshToggle() {
+    const refreshButton = document.getElementById('refreshButton');
+    if (!refreshButton) return;
+
+    if (document.getElementById('autoRefreshToggle')) {
+        return;
+    }
+
+    const label = document.createElement('label');
+    label.id = 'autoRefreshToggleLabel';
+    label.style.display = 'inline-flex';
+    label.style.alignItems = 'center';
+    label.style.gap = '6px';
+    label.style.fontSize = '13px';
+    label.style.color = 'var(--text)';
+    label.style.userSelect = 'none';
+    label.style.marginLeft = '10px';
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.id = 'autoRefreshToggle';
+    input.checked = true;
+    input.style.margin = '0';
+
+    input.addEventListener('change', () => {
+        autoRefreshEnabled = input.checked;
+    });
+
+    label.append(input);
+    label.append(document.createTextNode('Auto refresh'));
+
+    refreshButton.insertAdjacentElement('afterend', label);
+    autoRefreshEnabled = input.checked;
 }
 
 async function loadStatus() {
@@ -130,6 +169,7 @@ function renderGuildRail() {
             loadedMessages = [];
             nextBeforeMessageId = null;
             hasMoreMessages = false;
+
             renderGuildRail();
             renderMessages([]);
             renderChannels();
@@ -163,13 +203,16 @@ async function loadGuilds() {
 
 function groupChannels(channels) {
     const grouped = new Map();
+
     for (const channel of channels) {
         const key = channel.categoryName || 'Uncategorized';
         if (!grouped.has(key)) {
             grouped.set(key, []);
         }
+
         grouped.get(key).push(channel);
     }
+
     return [...grouped.entries()];
 }
 
@@ -180,7 +223,10 @@ function renderChannels() {
     const searchTerm = document.getElementById('channelSearch').value.trim().toLowerCase();
     const guildChannels = allChannels
         .filter(channel => channel.guildId === selectedGuildId)
-        .filter(channel => !searchTerm || channel.name.toLowerCase().includes(searchTerm) || (channel.categoryName || '').toLowerCase().includes(searchTerm));
+        .filter(channel =>
+            !searchTerm ||
+            channel.name.toLowerCase().includes(searchTerm) ||
+            (channel.categoryName || '').toLowerCase().includes(searchTerm));
 
     if (!guildChannels.length) {
         const empty = el('div', 'empty-copy', searchTerm ? 'No channels matched your search.' : 'No channels available.');
@@ -198,6 +244,7 @@ function renderChannels() {
 
             const left = el('div', 'channel-left');
             left.append(el('span', 'channel-hash', '#'));
+
             const nameWrap = el('div', 'channel-name-wrap');
             nameWrap.append(el('div', 'channel-name', channel.name));
             nameWrap.append(el('div', 'channel-meta', `${channel.recentMessageCount} live cached`));
@@ -213,6 +260,7 @@ function renderChannels() {
                 loadedMessages = [];
                 nextBeforeMessageId = null;
                 hasMoreMessages = false;
+
                 document.getElementById('currentChannel').textContent = `# ${channel.name}`;
                 renderChannels();
                 await loadMessages(true, { scrollMode: 'bottom' });
@@ -302,9 +350,11 @@ function renderMessages(messages) {
         const main = el('div', 'message-main');
         const topline = el('div', 'message-topline');
         topline.append(el('span', 'message-author', message.authorName));
+
         if (message.isBot) {
             topline.append(el('span', 'bot-tag', 'BOT'));
         }
+
         topline.append(el('span', 'message-time', new Date(message.timestamp).toLocaleString()));
         main.append(topline);
         main.append(el('div', 'message-content', message.content || '(no text content)'));
@@ -314,6 +364,7 @@ function renderMessages(messages) {
             for (const attachment of message.attachments) {
                 grid.append(createAttachment(attachment));
             }
+
             main.append(grid);
         }
 
@@ -347,7 +398,7 @@ async function loadMessages(reset = false, options = {}) {
         if (isLoadingMessages) return;
         isLoadingMessages = true;
     } else {
-        if (isLoadingOlderMessages || !nextBeforeMessageId || !hasMoreMessages) return;
+        if (isLoadingOlderMessages || isLoadingMessages || !nextBeforeMessageId || !hasMoreMessages) return;
         isLoadingOlderMessages = true;
     }
 
@@ -372,7 +423,6 @@ async function loadMessages(reset = false, options = {}) {
 
         hasMoreMessages = page.hasMore;
         nextBeforeMessageId = page.nextBeforeMessageId;
-
         renderMessages(loadedMessages);
 
         if (reset) {
@@ -399,17 +449,22 @@ async function refreshLatestMessages(options = {}) {
         return;
     }
 
-    isLoadingMessages = true;
-
-    const { scrollMode = 'preserve' } = options;
     const container = getMessageScrollHost();
+
+    // Prevent the periodic refresh from snapping the user back to the newest page
+    // while they are reading older messages above the bottom.
+    if (!isNearBottom(container)) {
+        return;
+    }
+
+    isLoadingMessages = true;
+    const { scrollMode = 'preserve' } = options;
     const wasNearBottom = isNearBottom(container);
     const previousScrollTop = container.scrollTop;
     const previousScrollHeight = container.scrollHeight;
 
     try {
         const page = await getJson(`/api/channels/${encodeURIComponent(selectedChannelId)}/messages`);
-
         loadedMessages = mergeNewestFirst(loadedMessages, page.items);
 
         if (!nextBeforeMessageId || loadedMessages.length <= page.items.length) {
@@ -448,9 +503,10 @@ function startAutoRefresh() {
     }
 
     refreshTimer = setInterval(() => {
-        if (selectedChannelId) {
+        if (autoRefreshEnabled && selectedChannelId) {
             refreshLatestMessages({ scrollMode: 'preserve' }).catch(() => {});
         }
+
         loadStatus().catch(() => {});
     }, 5000);
 }
@@ -465,7 +521,7 @@ document.getElementById('refreshButton').addEventListener('click', () => {
 
 const messageScrollHost = getMessageScrollHost();
 messageScrollHost.addEventListener('scroll', () => {
-    if (!selectedChannelId || !hasMoreMessages || !nextBeforeMessageId || isLoadingOlderMessages) {
+    if (!selectedChannelId || !hasMoreMessages || !nextBeforeMessageId || isLoadingOlderMessages || isLoadingMessages) {
         return;
     }
 
@@ -477,6 +533,8 @@ messageScrollHost.addEventListener('scroll', () => {
 document.getElementById('channelSearch').addEventListener('input', () => {
     renderChannels();
 });
+
+ensureAutoRefreshToggle();
 
 refreshAll()
     .then(startAutoRefresh)
