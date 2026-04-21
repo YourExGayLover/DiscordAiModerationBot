@@ -21,8 +21,14 @@
 
         <main class="messages-panel">
             <header class="toolbar">
-                <h1 id="currentChannel">Select a channel</h1>
-                <button id="refreshButton" type="button">Refresh</button>
+                <div>
+                    <h1 id="currentChannel">Select a channel</h1>
+                    <div id="messageMeta" class="status compact"></div>
+                </div>
+                <div class="toolbar-actions">
+                    <button id="refreshButton" type="button">Refresh</button>
+                    <button id="loadOlderButton" type="button" disabled>Load older</button>
+                </div>
             </header>
             <section id="messages" class="messages"></section>
         </main>

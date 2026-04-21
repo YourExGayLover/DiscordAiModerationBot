@@ -15,3 +15,8 @@ public sealed record MessageDto(
     DateTimeOffset Timestamp,
     bool IsBot,
     IReadOnlyList<AttachmentDto> Attachments);
+
+public sealed record MessagePageDto(
+    IReadOnlyList<MessageDto> Items,
+    bool HasMore,
+    string? NextBeforeMessageId);

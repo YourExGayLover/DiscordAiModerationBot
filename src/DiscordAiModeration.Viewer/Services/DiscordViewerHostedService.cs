@@ -61,7 +61,7 @@ public sealed class DiscordViewerHostedService : BackgroundService
         await base.StopAsync(cancellationToken);
     }
 
-    private async Task OnReadyAsync()
+    private Task OnReadyAsync()
     {
         try
         {
@@ -71,30 +71,16 @@ public sealed class DiscordViewerHostedService : BackgroundService
                 guilds = guilds.Where(x => x.Id == preferredGuildId);
             }
 
-            foreach (var guild in guilds)
-            {
-                foreach (var channel in guild.TextChannels.OrderBy(x => x.Position))
-                {
-                    try
-                    {
-                        var messages = await channel.GetMessagesAsync(limit: _options.MaxMessagesPerChannel).FlattenAsync();
-                        _state.StoreHistoricalMessages(channel.Id, messages);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to read history for #{ChannelName} ({ChannelId}) in guild {GuildName}", channel.Name, channel.Id, guild.Name);
-                    }
-                }
-            }
-
             _readyTcs.TrySetResult();
-            _logger.LogInformation("Discord viewer is ready. Guilds={GuildCount}", _client.Guilds.Count);
+            _logger.LogInformation("Discord viewer is ready. Guilds={GuildCount}", guilds.Count());
         }
         catch (Exception ex)
         {
             _readyTcs.TrySetException(ex);
             _logger.LogError(ex, "Failed during initial Discord viewer sync.");
         }
+
+        return Task.CompletedTask;
     }
 
     private Task OnMessageReceivedAsync(SocketMessage message)

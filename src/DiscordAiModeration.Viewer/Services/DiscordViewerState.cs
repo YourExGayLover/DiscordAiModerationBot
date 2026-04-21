@@ -8,11 +8,13 @@ namespace DiscordAiModeration.Viewer.Services;
 
 public sealed class DiscordViewerState
 {
-    private readonly ConcurrentDictionary<ulong, ConcurrentQueue<MessageDto>> _messagesByChannel = new();
+    private readonly DiscordSocketClient _client;
     private readonly ViewerOptions _options;
+    private readonly ConcurrentDictionary<ulong, ConcurrentQueue<MessageDto>> _liveMessagesByChannel = new();
 
-    public DiscordViewerState(IOptions<ViewerOptions> options)
+    public DiscordViewerState(DiscordSocketClient client, IOptions<ViewerOptions> options)
     {
+        _client = client;
         _options = options.Value;
     }
 
@@ -27,10 +29,10 @@ public sealed class DiscordViewerState
 
         return guilds
             .OrderBy(x => x.Name)
-.Select(g => new GuildSummaryDto(
-    g.Id.ToString(),
-    g.Name,
-    g.TextChannels.Count))
+            .Select(g => new GuildSummaryDto(
+                g.Id.ToString(),
+                g.Name,
+                g.TextChannels.Count))
             .ToList();
     }
 
@@ -49,41 +51,53 @@ public sealed class DiscordViewerState
         }
 
         return guilds
-.SelectMany(g => g.TextChannels.Select(c => new ChannelSummaryDto(
-    c.Id.ToString(),
-    c.Name,
-    g.Id.ToString(),
-    g.Name,
-    c.Position,
-    _messagesByChannel.TryGetValue(c.Id, out var q) ? q.Count : 0)))
+            .SelectMany(g => g.TextChannels.Select(c => new ChannelSummaryDto(
+                c.Id.ToString(),
+                c.Name,
+                g.Id.ToString(),
+                g.Name,
+                c.Position,
+                _liveMessagesByChannel.TryGetValue(c.Id, out var q) ? q.Count : 0)))
             .OrderBy(x => x.GuildName)
             .ThenBy(x => x.Position)
             .ThenBy(x => x.Name)
             .ToList();
     }
 
-    public IReadOnlyList<MessageDto> GetMessages(ulong channelId)
+    public async Task<MessagePageDto> GetMessagePageAsync(ulong channelId, ulong? beforeMessageId)
     {
-        if (!_messagesByChannel.TryGetValue(channelId, out var queue))
+        if (_client.GetChannel(channelId) is not SocketTextChannel channel)
         {
-            return Array.Empty<MessageDto>();
+            return new MessagePageDto(Array.Empty<MessageDto>(), false, null);
         }
 
-        return queue
-            .OrderBy(x => x.Timestamp)
+        var pageSize = Math.Clamp(_options.MaxMessagesPerChannel, 1, 100);
+
+        IEnumerable<IMessage> fetched = beforeMessageId.HasValue
+            ? await channel.GetMessagesAsync(beforeMessageId.Value, Direction.Before, pageSize).FlattenAsync()
+            : await channel.GetMessagesAsync(pageSize).FlattenAsync();
+
+        var fetchedDtos = fetched
+            .OrderByDescending(m => m.Timestamp)
+            .Select(m => ToDto(channelId, m))
             .ToList();
-    }
 
-    public void StoreHistoricalMessages(ulong channelId, IEnumerable<IMessage> messages)
-    {
-        var queue = _messagesByChannel.GetOrAdd(channelId, _ => new ConcurrentQueue<MessageDto>());
-
-        foreach (var message in messages.OrderBy(x => x.Timestamp))
+        if (!beforeMessageId.HasValue && _liveMessagesByChannel.TryGetValue(channelId, out var liveQueue))
         {
-            queue.Enqueue(ToDto(channelId, message));
+            var combined = liveQueue
+                .Concat(fetchedDtos)
+                .GroupBy(m => m.Id)
+                .Select(g => g.OrderByDescending(x => x.Timestamp).First())
+                .OrderByDescending(m => m.Timestamp)
+                .ToList();
+
+            fetchedDtos = combined;
         }
 
-        Trim(queue);
+        var hasMore = fetchedDtos.Count == pageSize;
+        var nextBeforeMessageId = fetchedDtos.Count > 0 ? fetchedDtos[^1].Id : null;
+
+        return new MessagePageDto(fetchedDtos, hasMore, nextBeforeMessageId);
     }
 
     public void StoreLiveMessage(SocketMessage message)
@@ -93,7 +107,7 @@ public sealed class DiscordViewerState
             return;
         }
 
-        var queue = _messagesByChannel.GetOrAdd(message.Channel.Id, _ => new ConcurrentQueue<MessageDto>());
+        var queue = _liveMessagesByChannel.GetOrAdd(message.Channel.Id, _ => new ConcurrentQueue<MessageDto>());
         queue.Enqueue(ToDto(message.Channel.Id, message));
         Trim(queue);
     }

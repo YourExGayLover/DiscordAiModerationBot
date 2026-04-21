@@ -15,7 +15,7 @@ builder.Logging.AddSimpleConsole(options =>
 
 builder.Services.Configure<ViewerOptions>(builder.Configuration.GetSection(ViewerOptions.SectionName));
 
-builder.Services.AddSingleton(sp =>
+builder.Services.AddSingleton(_ =>
 {
     var config = new DiscordSocketConfig
     {

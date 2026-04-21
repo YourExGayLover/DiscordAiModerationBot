@@ -1,5 +1,8 @@
 let selectedGuildId = null;
 let selectedChannelId = null;
+let loadedMessages = [];
+let nextBeforeMessageId = null;
+let hasMoreMessages = false;
 
 async function getJson(url) {
     const response = await fetch(url);
@@ -14,6 +17,26 @@ function el(tag, className, text) {
     if (className) element.className = className;
     if (text !== undefined) element.textContent = text;
     return element;
+}
+
+function setMessageMeta() {
+    const meta = document.getElementById('messageMeta');
+    if (!selectedChannelId) {
+        meta.textContent = '';
+        return;
+    }
+
+    if (!loadedMessages.length) {
+        meta.textContent = 'No messages loaded yet.';
+        return;
+    }
+
+    meta.textContent = `${loadedMessages.length} loaded • newest first${hasMoreMessages ? ' • more available' : ''}`;
+}
+
+function updateLoadOlderButton() {
+    const button = document.getElementById('loadOlderButton');
+    button.disabled = !selectedChannelId || !hasMoreMessages || !nextBeforeMessageId;
 }
 
 async function loadStatus() {
@@ -34,10 +57,15 @@ async function loadGuilds() {
         button.onclick = async () => {
             selectedGuildId = guild.id;
             selectedChannelId = null;
+            loadedMessages = [];
+            nextBeforeMessageId = null;
+            hasMoreMessages = false;
             await loadGuilds();
             await loadChannels();
             renderMessages([]);
             document.getElementById('currentChannel').textContent = 'Select a channel';
+            setMessageMeta();
+            updateLoadOlderButton();
         };
         host.append(button);
     }
@@ -50,19 +78,22 @@ async function loadGuilds() {
 }
 
 async function loadChannels() {
-    const channels = await getJson(`/api/channels${selectedGuildId ? `?guildId=${selectedGuildId}` : ''}`);
+    const channels = await getJson(`/api/channels${selectedGuildId ? `?guildId=${encodeURIComponent(selectedGuildId)}` : ''}`);
     const host = document.getElementById('channels');
     host.innerHTML = '';
 
     for (const channel of channels) {
         const button = el('button', 'list-item' + (channel.id === selectedChannelId ? ' active' : ''));
         button.append(el('div', null, `# ${channel.name}`));
-        button.append(el('span', 'secondary', `${channel.recentMessageCount} cached messages`));
+        button.append(el('span', 'secondary', `${channel.recentMessageCount} live cached messages`));
         button.onclick = async () => {
             selectedChannelId = channel.id;
+            loadedMessages = [];
+            nextBeforeMessageId = null;
+            hasMoreMessages = false;
             document.getElementById('currentChannel').textContent = `# ${channel.name}`;
             await loadChannels();
-            await loadMessages();
+            await loadMessages(true);
         };
         host.append(button);
     }
@@ -73,7 +104,7 @@ function renderMessages(messages) {
     host.innerHTML = '';
 
     if (!messages.length) {
-        host.append(el('div', 'status', 'No cached messages yet for this channel.'));
+        host.append(el('div', 'status', 'No messages loaded for this channel yet.'));
         return;
     }
 
@@ -103,30 +134,71 @@ function renderMessages(messages) {
     }
 }
 
-async function loadMessages() {
+function mergeNewestFirst(existing, incoming) {
+    const map = new Map();
+
+    for (const message of [...existing, ...incoming]) {
+        map.set(message.id, message);
+    }
+
+    return [...map.values()].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+}
+
+async function loadMessages(reset = false) {
     if (!selectedChannelId) {
+        loadedMessages = [];
         renderMessages([]);
+        setMessageMeta();
+        updateLoadOlderButton();
         return;
     }
 
-    const messages = await getJson(`/api/channels/${selectedChannelId}/messages`);
-    renderMessages(messages);
+    const beforePart = !reset && nextBeforeMessageId
+        ? `?beforeMessageId=${encodeURIComponent(nextBeforeMessageId)}`
+        : '';
+
+    const page = await getJson(`/api/channels/${encodeURIComponent(selectedChannelId)}/messages${beforePart}`);
+
+    if (reset) {
+        loadedMessages = page.items;
+    } else {
+        loadedMessages = mergeNewestFirst(loadedMessages, page.items);
+    }
+
+    hasMoreMessages = page.hasMore;
+    nextBeforeMessageId = page.nextBeforeMessageId;
+
+    renderMessages(loadedMessages);
+    setMessageMeta();
+    updateLoadOlderButton();
 }
 
 async function refreshAll() {
     await loadStatus();
     await loadGuilds();
     if (selectedChannelId) {
-        await loadMessages();
+        await loadMessages(true);
     }
 }
 
-document.getElementById('refreshButton').addEventListener('click', refreshAll);
+document.getElementById('refreshButton').addEventListener('click', () => {
+    loadMessages(true).catch(error => {
+        document.getElementById('status').textContent = error.message;
+    });
+});
+
+document.getElementById('loadOlderButton').addEventListener('click', () => {
+    loadMessages(false).catch(error => {
+        document.getElementById('status').textContent = error.message;
+    });
+});
+
 refreshAll().catch(error => {
     document.getElementById('status').textContent = error.message;
 });
+
 setInterval(() => {
     if (selectedChannelId) {
-        loadMessages().catch(() => {});
+        loadMessages(true).catch(() => {});
     }
 }, 5000);

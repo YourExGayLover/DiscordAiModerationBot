@@ -31,14 +31,26 @@ public static class ViewerEndpoints
             return Results.Ok(state.GetChannels(client, parsedGuildId));
         });
 
-        app.MapGet("/api/channels/{channelId}/messages", (string channelId, DiscordViewerState state) =>
+        app.MapGet("/api/channels/{channelId}/messages", async (string channelId, string? beforeMessageId, DiscordViewerState state) =>
         {
             if (!ulong.TryParse(channelId, out var parsedChannelId))
             {
                 return Results.BadRequest("Invalid channel id.");
             }
 
-            return Results.Ok(state.GetMessages(parsedChannelId));
+            ulong? parsedBeforeMessageId = null;
+            if (!string.IsNullOrWhiteSpace(beforeMessageId))
+            {
+                if (!ulong.TryParse(beforeMessageId, out var parsedBefore))
+                {
+                    return Results.BadRequest("Invalid beforeMessageId.");
+                }
+
+                parsedBeforeMessageId = parsedBefore;
+            }
+
+            var page = await state.GetMessagePageAsync(parsedChannelId, parsedBeforeMessageId);
+            return Results.Ok(page);
         });
 
         return app;
