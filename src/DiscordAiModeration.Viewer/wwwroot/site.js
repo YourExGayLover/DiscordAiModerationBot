@@ -394,6 +394,42 @@ async function loadMessages(reset = false, options = {}) {
     }
 }
 
+async function refreshLatestMessages(options = {}) {
+    if (!selectedChannelId || isLoadingMessages || isLoadingOlderMessages) {
+        return;
+    }
+
+    isLoadingMessages = true;
+
+    const { scrollMode = 'preserve' } = options;
+    const container = getMessageScrollHost();
+    const wasNearBottom = isNearBottom(container);
+    const previousScrollTop = container.scrollTop;
+    const previousScrollHeight = container.scrollHeight;
+
+    try {
+        const page = await getJson(`/api/channels/${encodeURIComponent(selectedChannelId)}/messages`);
+
+        loadedMessages = mergeNewestFirst(loadedMessages, page.items);
+
+        if (!nextBeforeMessageId || loadedMessages.length <= page.items.length) {
+            nextBeforeMessageId = page.nextBeforeMessageId;
+            hasMoreMessages = page.hasMore;
+        }
+
+        renderMessages(loadedMessages);
+
+        if (scrollMode === 'bottom' || wasNearBottom) {
+            scrollMessagesToBottom();
+        } else {
+            const newScrollHeight = container.scrollHeight;
+            container.scrollTop = previousScrollTop + (newScrollHeight - previousScrollHeight);
+        }
+    } finally {
+        isLoadingMessages = false;
+    }
+}
+
 async function refreshAll() {
     await loadStatus();
     await loadGuilds();
@@ -413,7 +449,7 @@ function startAutoRefresh() {
 
     refreshTimer = setInterval(() => {
         if (selectedChannelId) {
-            loadMessages(true, { scrollMode: 'preserve' }).catch(() => {});
+            refreshLatestMessages({ scrollMode: 'preserve' }).catch(() => {});
         }
         loadStatus().catch(() => {});
     }, 5000);
