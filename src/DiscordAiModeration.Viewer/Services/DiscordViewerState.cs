@@ -32,7 +32,8 @@ public sealed class DiscordViewerState
             .Select(g => new GuildSummaryDto(
                 g.Id.ToString(),
                 g.Name,
-                g.TextChannels.Count))
+                g.TextChannels.Count,
+                g.IconUrl))
             .ToList();
     }
 
@@ -56,9 +57,10 @@ public sealed class DiscordViewerState
                 c.Name,
                 g.Id.ToString(),
                 g.Name,
+                c.Category?.Name,
                 c.Position,
                 _liveMessagesByChannel.TryGetValue(c.Id, out var q) ? q.Count : 0)))
-            .OrderBy(x => x.GuildName)
+            .OrderBy(x => x.CategoryName ?? "zzzzzzzz")
             .ThenBy(x => x.Position)
             .ThenBy(x => x.Name)
             .ToList();
@@ -118,11 +120,14 @@ public sealed class DiscordViewerState
             ? message.Attachments.Select(a => new AttachmentDto(a.Filename, a.Url, a.Size)).ToArray()
             : Array.Empty<AttachmentDto>();
 
+        var avatarUrl = message.Author.GetDisplayAvatarUrl(size: 64) ?? message.Author.GetDefaultAvatarUrl();
+
         return new MessageDto(
             message.Id.ToString(),
             channelId.ToString(),
             message.Author.Id.ToString(),
             message.Author.GlobalName ?? message.Author.Username,
+            avatarUrl,
             message.Content,
             message.Timestamp,
             message.Author.IsBot,

@@ -7,31 +7,64 @@
     <link rel="stylesheet" href="/site.css" />
 </head>
 <body>
-    <div class="layout">
-        <aside class="sidebar guilds">
-            <h2>Guilds</h2>
-            <div id="status" class="status">Loading status...</div>
-            <div id="guilds"></div>
+    <div class="app-shell">
+        <aside class="guild-rail">
+            <div class="brand">DM</div>
+            <div id="guildRail" class="guild-rail-list"></div>
         </aside>
 
-        <aside class="sidebar channels">
-            <h2>Channels</h2>
-            <div id="channels"></div>
-        </aside>
-
-        <main class="messages-panel">
-            <header class="toolbar">
+        <aside class="channel-sidebar">
+            <header class="channel-sidebar-header">
                 <div>
-                    <h1 id="currentChannel">Select a channel</h1>
-                    <div id="messageMeta" class="status compact"></div>
+                    <div id="guildName" class="guild-name">Select a server</div>
+                    <div id="status" class="sidebar-status">Connecting…</div>
                 </div>
-                <div class="toolbar-actions">
+                <button id="refreshAllButton" class="icon-button" type="button" title="Refresh all">↻</button>
+            </header>
+
+            <div class="sidebar-tools">
+                <input id="channelSearch" type="search" placeholder="Search channels" autocomplete="off" />
+            </div>
+
+            <div id="channels" class="channel-groups"></div>
+        </aside>
+
+        <main class="chat-panel">
+            <header class="chat-header">
+                <div class="chat-title-wrap">
+                    <div id="currentChannel" class="chat-title">Select a channel</div>
+                    <div id="messageMeta" class="chat-subtitle"></div>
+                </div>
+                <div class="chat-actions">
                     <button id="refreshButton" type="button">Refresh</button>
                     <button id="loadOlderButton" type="button" disabled>Load older</button>
                 </div>
             </header>
+
             <section id="messages" class="messages"></section>
         </main>
+
+        <aside class="inspector">
+            <header class="inspector-header">Details</header>
+            <div id="inspectorContent" class="inspector-content">
+                <div class="inspector-card">
+                    <div class="inspector-label">Server</div>
+                    <div id="inspectorGuildName" class="inspector-value">-</div>
+                </div>
+                <div class="inspector-card">
+                    <div class="inspector-label">Channel</div>
+                    <div id="inspectorChannelName" class="inspector-value">-</div>
+                </div>
+                <div class="inspector-card">
+                    <div class="inspector-label">Loaded</div>
+                    <div id="inspectorLoadedCount" class="inspector-value">0 messages</div>
+                </div>
+                <div class="inspector-card">
+                    <div class="inspector-label">Ordering</div>
+                    <div class="inspector-value">Newest first</div>
+                </div>
+            </div>
+        </aside>
     </div>
 
     <script src="/site.js"></script>

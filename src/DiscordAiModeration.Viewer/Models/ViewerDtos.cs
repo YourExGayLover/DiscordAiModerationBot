@@ -1,8 +1,19 @@
 namespace DiscordAiModeration.Viewer.Models;
 
-public sealed record GuildSummaryDto(string Id, string Name, int TextChannelCount);
+public sealed record GuildSummaryDto(
+    string Id,
+    string Name,
+    int TextChannelCount,
+    string? IconUrl);
 
-public sealed record ChannelSummaryDto(string Id, string Name, string GuildId, string GuildName, int Position, int RecentMessageCount);
+public sealed record ChannelSummaryDto(
+    string Id,
+    string Name,
+    string GuildId,
+    string GuildName,
+    string? CategoryName,
+    int Position,
+    int RecentMessageCount);
 
 public sealed record AttachmentDto(string FileName, string Url, long? Size);
 
@@ -11,6 +22,7 @@ public sealed record MessageDto(
     string ChannelId,
     string AuthorId,
     string AuthorName,
+    string? AuthorAvatarUrl,
     string Content,
     DateTimeOffset Timestamp,
     bool IsBot,

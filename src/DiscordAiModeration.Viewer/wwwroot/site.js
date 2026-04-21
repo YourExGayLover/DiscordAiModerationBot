@@ -1,8 +1,13 @@
 let selectedGuildId = null;
+let selectedGuildName = null;
 let selectedChannelId = null;
+let selectedChannelName = null;
+let allGuilds = [];
+let allChannels = [];
 let loadedMessages = [];
 let nextBeforeMessageId = null;
 let hasMoreMessages = false;
+let refreshTimer = null;
 
 async function getJson(url) {
     const response = await fetch(url);
@@ -19,10 +24,48 @@ function el(tag, className, text) {
     return element;
 }
 
+function initials(name) {
+    return (name || '?')
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(part => part[0]?.toUpperCase() ?? '')
+        .join('') || '?';
+}
+
+function formatBytes(size) {
+    if (!size || size < 1) return 'Unknown size';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = size;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+    return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function isImageFile(fileName) {
+    return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fileName || '');
+}
+
+function setStatus(text, isError = false) {
+    const status = document.getElementById('status');
+    status.textContent = text;
+    status.style.color = isError ? 'var(--danger)' : 'var(--muted)';
+}
+
+function setInspector() {
+    document.getElementById('inspectorGuildName').textContent = selectedGuildName ?? '-';
+    document.getElementById('inspectorChannelName').textContent = selectedChannelName ? `# ${selectedChannelName}` : '-';
+    document.getElementById('inspectorLoadedCount').textContent = `${loadedMessages.length} message${loadedMessages.length === 1 ? '' : 's'}`;
+}
+
 function setMessageMeta() {
     const meta = document.getElementById('messageMeta');
+
     if (!selectedChannelId) {
-        meta.textContent = '';
+        meta.textContent = 'Choose a channel to load the newest page.';
         return;
     }
 
@@ -31,7 +74,7 @@ function setMessageMeta() {
         return;
     }
 
-    meta.textContent = `${loadedMessages.length} loaded • newest first${hasMoreMessages ? ' • more available' : ''}`;
+    meta.textContent = `${loadedMessages.length} loaded • newest first${hasMoreMessages ? ' • older pages available' : ''}`;
 }
 
 function updateLoadOlderButton() {
@@ -41,97 +84,228 @@ function updateLoadOlderButton() {
 
 async function loadStatus() {
     const status = await getJson('/api/status');
-    document.getElementById('status').textContent =
-        `User: ${status.currentUser ?? 'n/a'} | Logged In: ${status.isLoggedIn} | Connection: ${status.connectionState} | Guilds: ${status.guildCount}`;
+    setStatus(`User: ${status.currentUser ?? 'n/a'} • ${status.connectionState} • ${status.guildCount} guilds`);
+}
+
+function renderGuildRail() {
+    const host = document.getElementById('guildRail');
+    host.innerHTML = '';
+
+    for (const guild of allGuilds) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `guild-pill${guild.id === selectedGuildId ? ' active' : ''}`;
+        button.title = guild.name;
+
+        if (guild.iconUrl) {
+            const image = document.createElement('img');
+            image.src = guild.iconUrl;
+            image.alt = guild.name;
+            button.append(image);
+        } else {
+            button.textContent = initials(guild.name);
+        }
+
+        button.onclick = async () => {
+            selectedGuildId = guild.id;
+            selectedGuildName = guild.name;
+            selectedChannelId = null;
+            selectedChannelName = null;
+            loadedMessages = [];
+            nextBeforeMessageId = null;
+            hasMoreMessages = false;
+            renderGuildRail();
+            renderMessages([]);
+            renderChannels();
+            await loadChannels();
+        };
+
+        host.append(button);
+    }
 }
 
 async function loadGuilds() {
-    const guilds = await getJson('/api/guilds');
-    const host = document.getElementById('guilds');
-    host.innerHTML = '';
+    allGuilds = await getJson('/api/guilds');
 
-    for (const guild of guilds) {
-        const button = el('button', 'list-item' + (guild.id === selectedGuildId ? ' active' : ''));
-        button.append(el('div', null, guild.name));
-        button.append(el('span', 'secondary', `${guild.textChannelCount} text channels`));
-        button.onclick = async () => {
-            selectedGuildId = guild.id;
-            selectedChannelId = null;
-            loadedMessages = [];
-            nextBeforeMessageId = null;
-            hasMoreMessages = false;
-            await loadGuilds();
-            await loadChannels();
-            renderMessages([]);
-            document.getElementById('currentChannel').textContent = 'Select a channel';
-            setMessageMeta();
-            updateLoadOlderButton();
-        };
-        host.append(button);
+    if (!selectedGuildId && allGuilds.length > 0) {
+        selectedGuildId = allGuilds[0].id;
+        selectedGuildName = allGuilds[0].name;
     }
 
-    if (!selectedGuildId && guilds.length > 0) {
-        selectedGuildId = guilds[0].id;
-        await loadGuilds();
-        await loadChannels();
+    if (selectedGuildId && !allGuilds.some(g => g.id === selectedGuildId)) {
+        selectedGuildId = allGuilds[0]?.id ?? null;
+        selectedGuildName = allGuilds[0]?.name ?? null;
     }
+
+    if (selectedGuildId && !selectedGuildName) {
+        selectedGuildName = allGuilds.find(g => g.id === selectedGuildId)?.name ?? null;
+    }
+
+    renderGuildRail();
+    document.getElementById('guildName').textContent = selectedGuildName ?? 'Select a server';
 }
 
-async function loadChannels() {
-    const channels = await getJson(`/api/channels${selectedGuildId ? `?guildId=${encodeURIComponent(selectedGuildId)}` : ''}`);
+function groupChannels(channels) {
+    const grouped = new Map();
+    for (const channel of channels) {
+        const key = channel.categoryName || 'Uncategorized';
+        if (!grouped.has(key)) {
+            grouped.set(key, []);
+        }
+        grouped.get(key).push(channel);
+    }
+    return [...grouped.entries()];
+}
+
+function renderChannels() {
     const host = document.getElementById('channels');
     host.innerHTML = '';
 
-    for (const channel of channels) {
-        const button = el('button', 'list-item' + (channel.id === selectedChannelId ? ' active' : ''));
-        button.append(el('div', null, `# ${channel.name}`));
-        button.append(el('span', 'secondary', `${channel.recentMessageCount} live cached messages`));
-        button.onclick = async () => {
-            selectedChannelId = channel.id;
-            loadedMessages = [];
-            nextBeforeMessageId = null;
-            hasMoreMessages = false;
-            document.getElementById('currentChannel').textContent = `# ${channel.name}`;
-            await loadChannels();
-            await loadMessages(true);
-        };
-        host.append(button);
+    const searchTerm = document.getElementById('channelSearch').value.trim().toLowerCase();
+    const guildChannels = allChannels
+        .filter(channel => channel.guildId === selectedGuildId)
+        .filter(channel => !searchTerm || channel.name.toLowerCase().includes(searchTerm) || (channel.categoryName || '').toLowerCase().includes(searchTerm));
+
+    if (!guildChannels.length) {
+        const empty = el('div', 'empty-copy', searchTerm ? 'No channels matched your search.' : 'No channels available.');
+        host.append(empty);
+        return;
     }
+
+    for (const [categoryName, channels] of groupChannels(guildChannels)) {
+        const section = el('section', 'channel-group');
+        section.append(el('div', 'channel-group-title', categoryName));
+
+        for (const channel of channels) {
+            const button = el('button', `channel-item${channel.id === selectedChannelId ? ' active' : ''}`);
+            button.type = 'button';
+
+            const left = el('div', 'channel-left');
+            left.append(el('span', 'channel-hash', '#'));
+            const nameWrap = el('div', 'channel-name-wrap');
+            nameWrap.append(el('div', 'channel-name', channel.name));
+            nameWrap.append(el('div', 'channel-meta', `${channel.recentMessageCount} live cached`));
+            left.append(nameWrap);
+            button.append(left);
+
+            const badge = el('span', 'channel-badge', `${channel.recentMessageCount}`);
+            button.append(badge);
+
+            button.onclick = async () => {
+                selectedChannelId = channel.id;
+                selectedChannelName = channel.name;
+                loadedMessages = [];
+                nextBeforeMessageId = null;
+                hasMoreMessages = false;
+                document.getElementById('currentChannel').textContent = `# ${channel.name}`;
+                renderChannels();
+                await loadMessages(true);
+            };
+
+            section.append(button);
+        }
+
+        host.append(section);
+    }
+
+    setInspector();
+}
+
+async function loadChannels() {
+    allChannels = await getJson(`/api/channels${selectedGuildId ? `?guildId=${encodeURIComponent(selectedGuildId)}` : ''}`);
+    renderChannels();
+}
+
+function createAvatar(message) {
+    if (message.authorAvatarUrl) {
+        const image = document.createElement('img');
+        image.className = 'avatar';
+        image.src = message.authorAvatarUrl;
+        image.alt = message.authorName;
+        return image;
+    }
+
+    return el('div', 'avatar-fallback', initials(message.authorName));
+}
+
+function createAttachment(attachment) {
+    const card = document.createElement('a');
+    card.className = 'attachment-card';
+    card.href = attachment.url;
+    card.target = '_blank';
+    card.rel = 'noreferrer noopener';
+
+    if (isImageFile(attachment.fileName)) {
+        const image = document.createElement('img');
+        image.className = 'attachment-image';
+        image.src = attachment.url;
+        image.alt = attachment.fileName;
+        card.append(image);
+    }
+
+    const meta = el('div', 'attachment-meta');
+    meta.append(el('div', 'attachment-name', attachment.fileName));
+    meta.append(el('div', 'attachment-size', formatBytes(attachment.size)));
+    card.append(meta);
+
+    return card;
 }
 
 function renderMessages(messages) {
     const host = document.getElementById('messages');
     host.innerHTML = '';
 
+    if (!selectedChannelId) {
+        const state = el('div', 'empty-state');
+        state.append(el('div', 'empty-title', 'Open a channel'));
+        state.append(el('div', 'empty-copy', 'Choose a server on the left, then pick a text channel to load the newest messages first.'));
+        host.append(state);
+        setMessageMeta();
+        setInspector();
+        updateLoadOlderButton();
+        return;
+    }
+
     if (!messages.length) {
-        host.append(el('div', 'status', 'No messages loaded for this channel yet.'));
+        const state = el('div', 'empty-state');
+        state.append(el('div', 'empty-title', 'No messages loaded yet'));
+        state.append(el('div', 'empty-copy', 'Try Refresh, or load a different channel.'));
+        host.append(state);
+        setMessageMeta();
+        setInspector();
+        updateLoadOlderButton();
         return;
     }
 
     for (const message of messages) {
-        const wrapper = el('article', 'message');
-        const header = el('div', 'message-header');
-        header.append(el('span', 'author', message.authorName + (message.isBot ? ' [bot]' : '')));
-        header.append(el('span', 'timestamp', new Date(message.timestamp).toLocaleString()));
-        wrapper.append(header);
-        wrapper.append(el('div', 'content', message.content || '(no text content)'));
+        const card = el('article', 'message-card');
+        card.append(createAvatar(message));
+
+        const main = el('div', 'message-main');
+        const topline = el('div', 'message-topline');
+        topline.append(el('span', 'message-author', message.authorName));
+        if (message.isBot) {
+            topline.append(el('span', 'bot-tag', 'BOT'));
+        }
+        topline.append(el('span', 'message-time', new Date(message.timestamp).toLocaleString()));
+        main.append(topline);
+        main.append(el('div', 'message-content', message.content || '(no text content)'));
 
         if (message.attachments?.length) {
-            const attachments = el('div', 'attachments');
+            const grid = el('div', 'attachments-grid');
             for (const attachment of message.attachments) {
-                const link = document.createElement('a');
-                link.href = attachment.url;
-                link.target = '_blank';
-                link.rel = 'noreferrer noopener';
-                link.textContent = attachment.fileName;
-                attachments.append(link);
-                attachments.append(document.createElement('br'));
+                grid.append(createAttachment(attachment));
             }
-            wrapper.append(attachments);
+            main.append(grid);
         }
 
-        host.append(wrapper);
+        card.append(main);
+        host.append(card);
     }
+
+    setMessageMeta();
+    setInspector();
+    updateLoadOlderButton();
 }
 
 function mergeNewestFirst(existing, incoming) {
@@ -148,8 +322,6 @@ async function loadMessages(reset = false) {
     if (!selectedChannelId) {
         loadedMessages = [];
         renderMessages([]);
-        setMessageMeta();
-        updateLoadOlderButton();
         return;
     }
 
@@ -169,36 +341,49 @@ async function loadMessages(reset = false) {
     nextBeforeMessageId = page.nextBeforeMessageId;
 
     renderMessages(loadedMessages);
-    setMessageMeta();
-    updateLoadOlderButton();
 }
 
 async function refreshAll() {
     await loadStatus();
     await loadGuilds();
+    await loadChannels();
+
     if (selectedChannelId) {
         await loadMessages(true);
+    } else {
+        renderMessages([]);
     }
 }
 
+function startAutoRefresh() {
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+    }
+
+    refreshTimer = setInterval(() => {
+        if (selectedChannelId) {
+            loadMessages(true).catch(() => {});
+        }
+        loadStatus().catch(() => {});
+    }, 5000);
+}
+
+document.getElementById('refreshAllButton').addEventListener('click', () => {
+    refreshAll().catch(error => setStatus(error.message, true));
+});
+
 document.getElementById('refreshButton').addEventListener('click', () => {
-    loadMessages(true).catch(error => {
-        document.getElementById('status').textContent = error.message;
-    });
+    loadMessages(true).catch(error => setStatus(error.message, true));
 });
 
 document.getElementById('loadOlderButton').addEventListener('click', () => {
-    loadMessages(false).catch(error => {
-        document.getElementById('status').textContent = error.message;
-    });
+    loadMessages(false).catch(error => setStatus(error.message, true));
 });
 
-refreshAll().catch(error => {
-    document.getElementById('status').textContent = error.message;
+document.getElementById('channelSearch').addEventListener('input', () => {
+    renderChannels();
 });
 
-setInterval(() => {
-    if (selectedChannelId) {
-        loadMessages(true).catch(() => {});
-    }
-}, 5000);
+refreshAll()
+    .then(startAutoRefresh)
+    .catch(error => setStatus(error.message, true));
