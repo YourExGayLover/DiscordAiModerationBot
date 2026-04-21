@@ -8,6 +8,8 @@ let loadedMessages = [];
 let nextBeforeMessageId = null;
 let hasMoreMessages = false;
 let refreshTimer = null;
+let isLoadingMessages = false;
+let isLoadingOlderMessages = false;
 
 async function getJson(url) {
     const response = await fetch(url);
@@ -79,6 +81,7 @@ function setMessageMeta() {
 
 function updateLoadOlderButton() {
     const button = document.getElementById('loadOlderButton');
+    if (!button) return;
     button.disabled = !selectedChannelId || !hasMoreMessages || !nextBeforeMessageId;
 }
 
@@ -340,38 +343,54 @@ async function loadMessages(reset = false, options = {}) {
         return;
     }
 
+    if (reset) {
+        if (isLoadingMessages) return;
+        isLoadingMessages = true;
+    } else {
+        if (isLoadingOlderMessages || !nextBeforeMessageId || !hasMoreMessages) return;
+        isLoadingOlderMessages = true;
+    }
+
     const { scrollMode = 'preserve' } = options;
     const container = getMessageScrollHost();
     const wasNearBottom = isNearBottom(container);
     const previousScrollHeight = container.scrollHeight;
     const previousScrollTop = container.scrollTop;
 
-    const beforePart = !reset && nextBeforeMessageId
-        ? `?beforeMessageId=${encodeURIComponent(nextBeforeMessageId)}`
-        : '';
+    try {
+        const beforePart = !reset && nextBeforeMessageId
+            ? `?beforeMessageId=${encodeURIComponent(nextBeforeMessageId)}`
+            : '';
 
-    const page = await getJson(`/api/channels/${encodeURIComponent(selectedChannelId)}/messages${beforePart}`);
+        const page = await getJson(`/api/channels/${encodeURIComponent(selectedChannelId)}/messages${beforePart}`);
 
-    if (reset) {
-        loadedMessages = page.items;
-    } else {
-        loadedMessages = mergeNewestFirst(loadedMessages, page.items);
-    }
-
-    hasMoreMessages = page.hasMore;
-    nextBeforeMessageId = page.nextBeforeMessageId;
-
-    renderMessages(loadedMessages);
-
-    if (reset) {
-        if (scrollMode === 'bottom' || wasNearBottom) {
-            scrollMessagesToBottom();
+        if (reset) {
+            loadedMessages = page.items;
         } else {
-            container.scrollTop = previousScrollTop;
+            loadedMessages = mergeNewestFirst(loadedMessages, page.items);
         }
-    } else {
-        const newScrollHeight = container.scrollHeight;
-        container.scrollTop = previousScrollTop + (newScrollHeight - previousScrollHeight);
+
+        hasMoreMessages = page.hasMore;
+        nextBeforeMessageId = page.nextBeforeMessageId;
+
+        renderMessages(loadedMessages);
+
+        if (reset) {
+            if (scrollMode === 'bottom' || wasNearBottom) {
+                scrollMessagesToBottom();
+            } else {
+                container.scrollTop = previousScrollTop;
+            }
+        } else {
+            const newScrollHeight = container.scrollHeight;
+            container.scrollTop = previousScrollTop + (newScrollHeight - previousScrollHeight);
+        }
+    } finally {
+        if (reset) {
+            isLoadingMessages = false;
+        } else {
+            isLoadingOlderMessages = false;
+        }
     }
 }
 
@@ -408,8 +427,15 @@ document.getElementById('refreshButton').addEventListener('click', () => {
     loadMessages(true, { scrollMode: 'bottom' }).catch(error => setStatus(error.message, true));
 });
 
-document.getElementById('loadOlderButton').addEventListener('click', () => {
-    loadMessages(false).catch(error => setStatus(error.message, true));
+const messageScrollHost = getMessageScrollHost();
+messageScrollHost.addEventListener('scroll', () => {
+    if (!selectedChannelId || !hasMoreMessages || !nextBeforeMessageId || isLoadingOlderMessages) {
+        return;
+    }
+
+    if (messageScrollHost.scrollTop <= 80) {
+        loadMessages(false).catch(error => setStatus(error.message, true));
+    }
 });
 
 document.getElementById('channelSearch').addEventListener('input', () => {
