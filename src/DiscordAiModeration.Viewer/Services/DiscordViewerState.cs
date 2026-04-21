@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using Discord;
 using Discord.WebSocket;
 using DiscordAiModeration.Viewer.Models;
@@ -75,7 +76,7 @@ public sealed class DiscordViewerState
 
         var pageSize = Math.Clamp(_options.MaxMessagesPerChannel, 1, 100);
 
-        IEnumerable<IMessage> fetched = beforeMessageId.HasValue
+        var fetched = beforeMessageId.HasValue
             ? await channel.GetMessagesAsync(beforeMessageId.Value, Direction.Before, pageSize).FlattenAsync()
             : await channel.GetMessagesAsync(pageSize).FlattenAsync();
 
@@ -84,20 +85,21 @@ public sealed class DiscordViewerState
             .Select(m => ToDto(channelId, m))
             .ToList();
 
+        // Determine paging from the Discord fetch itself, not the merged list.
+        var hasMore = fetchedDtos.Count == pageSize;
+        var nextBeforeMessageId = fetchedDtos.Count > 0 ? fetchedDtos[^1].Id : null;
+
+        // Only merge live cache into the newest page.
         if (!beforeMessageId.HasValue && _liveMessagesByChannel.TryGetValue(channelId, out var liveQueue))
         {
-            var combined = liveQueue
+            fetchedDtos = liveQueue
                 .Concat(fetchedDtos)
                 .GroupBy(m => m.Id)
                 .Select(g => g.OrderByDescending(x => x.Timestamp).First())
                 .OrderByDescending(m => m.Timestamp)
+                .Take(pageSize)
                 .ToList();
-
-            fetchedDtos = combined;
         }
-
-        var hasMore = fetchedDtos.Count == pageSize;
-        var nextBeforeMessageId = fetchedDtos.Count > 0 ? fetchedDtos[^1].Id : null;
 
         return new MessagePageDto(fetchedDtos, hasMore, nextBeforeMessageId);
     }
@@ -121,35 +123,9 @@ public sealed class DiscordViewerState
             : Array.Empty<AttachmentDto>();
 
         var avatarUrl = message.Author.GetDisplayAvatarUrl(size: 64) ?? message.Author.GetDefaultAvatarUrl();
-        var content = message.Content;
 
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            var embedText = message.Embeds
-                .Select(e =>
-                {
-                    var parts = new List<string>();
+        var content = BuildDisplayContent(message, attachments);
 
-                    if (!string.IsNullOrWhiteSpace(e.Title))
-                        parts.Add(e.Title);
-
-                    if (!string.IsNullOrWhiteSpace(e.Description))
-                        parts.Add(e.Description);
-
-                    if (e.Fields != null)
-                    {
-                        foreach (var field in e.Fields)
-                        {
-                            parts.Add($"{field.Name}: {field.Value}");
-                        }
-                    }
-
-                    return string.Join("\n", parts);
-                })
-                .Where(x => !string.IsNullOrWhiteSpace(x));
-
-            content = string.Join("\n\n", embedText);
-        }
         return new MessageDto(
             message.Id.ToString(),
             channelId.ToString(),
@@ -160,6 +136,130 @@ public sealed class DiscordViewerState
             message.Timestamp,
             message.Author.IsBot,
             attachments);
+    }
+
+    private string BuildDisplayContent(IMessage message, IReadOnlyList<AttachmentDto> attachments)
+    {
+        var content = message.Content?.Trim() ?? string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(content))
+        {
+            return FormatDiscordText(content);
+        }
+
+        var embedParts = new List<string>();
+
+        foreach (var embed in message.Embeds)
+        {
+            if (!string.IsNullOrWhiteSpace(embed.Title))
+            {
+                embedParts.Add(embed.Title.Trim());
+            }
+
+            if (!string.IsNullOrWhiteSpace(embed.Description))
+            {
+                embedParts.Add(embed.Description.Trim());
+            }
+
+            foreach (var field in embed.Fields)
+            {
+                var name = field.Name?.Trim();
+                var value = field.Value?.Trim();
+
+                if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(value))
+                {
+                    embedParts.Add($"{name}: {value}");
+                }
+                else if (!string.IsNullOrWhiteSpace(value))
+                {
+                    embedParts.Add(value);
+                }
+            }
+
+            if (embed.Footer.HasValue && !string.IsNullOrWhiteSpace(embed.Footer.Value.Text))
+            {
+                embedParts.Add(embed.Footer.Value.Text.Trim());
+            }
+        }
+
+        var embedText = string.Join("\n\n", embedParts.Where(x => !string.IsNullOrWhiteSpace(x))).Trim();
+
+        if (!string.IsNullOrWhiteSpace(embedText))
+        {
+            return FormatDiscordText(embedText);
+        }
+
+        if (attachments.Count > 0)
+        {
+            return "[attachment]";
+        }
+
+        return "[no text]";
+    }
+
+    private static string FormatDiscordText(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return string.Empty;
+        }
+
+        var text = input;
+
+        // Remove Discord-style quote markers
+        text = Regex.Replace(text, @"^\s*>\s?", "", RegexOptions.Multiline);
+
+        // Inline code
+        text = Regex.Replace(text, @"`([^`]+)`", "$1");
+
+        // Bold / italic / underline / strikethrough
+        text = Regex.Replace(text, @"\*\*(.*?)\*\*", "$1");
+        text = Regex.Replace(text, @"__(.*?)__", "$1");
+        text = Regex.Replace(text, @"\*(.*?)\*", "$1");
+        text = Regex.Replace(text, @"~~(.*?)~~", "$1");
+
+        // User mentions <@123> or <@!123>
+        text = Regex.Replace(text, @"<@!?(\d+)>", "@$1");
+
+        // Role mentions <@&123>
+        text = Regex.Replace(text, @"<@&(\d+)>", "@role:$1");
+
+        // Channel mentions <#123>
+        text = Regex.Replace(text, @"<#(\d+)>", "#$1");
+
+        // Relative timestamps <t:1776736849:R>
+        text = Regex.Replace(text, @"<t:(\d+):R>", match =>
+        {
+            if (!long.TryParse(match.Groups[1].Value, out var unix))
+            {
+                return match.Value;
+            }
+
+            var then = DateTimeOffset.FromUnixTimeSeconds(unix);
+            var diff = DateTimeOffset.UtcNow - then;
+
+            if (diff.TotalMinutes < 1)
+            {
+                return "just now";
+            }
+
+            if (diff.TotalHours < 1)
+            {
+                return $"{(int)diff.TotalMinutes} min ago";
+            }
+
+            if (diff.TotalDays < 1)
+            {
+                return $"{(int)diff.TotalHours} hours ago";
+            }
+
+            return $"{(int)diff.TotalDays} days ago";
+        });
+
+        // Collapse excessive blank lines
+        text = Regex.Replace(text, @"\n{3,}", "\n\n");
+
+        return text.Trim();
     }
 
     private void Trim(ConcurrentQueue<MessageDto> queue)
