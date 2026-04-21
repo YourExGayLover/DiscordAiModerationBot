@@ -32,3 +32,22 @@ public sealed record MessagePageDto(
     IReadOnlyList<MessageDto> Items,
     bool HasMore,
     string? NextBeforeMessageId);
+
+public sealed record VoiceMemberDto(
+    string Id,
+    string DisplayName,
+    string? AvatarUrl,
+    bool IsMuted,
+    bool IsDeafened,
+    bool IsStreaming,
+    bool IsVideoEnabled);
+
+public sealed record VoiceChannelStateDto(
+    string Id,
+    string Name,
+    string GuildId,
+    string GuildName,
+    string? CategoryName,
+    int Position,
+    int ConnectedCount,
+    IReadOnlyList<VoiceMemberDto> Members);

@@ -31,6 +31,18 @@ public static class ViewerEndpoints
             return Results.Ok(state.GetChannels(client, parsedGuildId));
         });
 
+        app.MapGet("/api/voice", (string? guildId, DiscordSocketClient client, DiscordViewerState state) =>
+        {
+            ulong? parsedGuildId = null;
+
+            if (!string.IsNullOrWhiteSpace(guildId) && ulong.TryParse(guildId, out var parsed))
+            {
+                parsedGuildId = parsed;
+            }
+
+            return Results.Ok(state.GetVoiceChannels(client, parsedGuildId));
+        });
+
         app.MapGet("/api/channels/{channelId}/messages", async (string channelId, string? beforeMessageId, DiscordViewerState state) =>
         {
             if (!ulong.TryParse(channelId, out var parsedChannelId))

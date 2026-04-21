@@ -4,6 +4,7 @@ let selectedChannelId = null;
 let selectedChannelName = null;
 let allGuilds = [];
 let allChannels = [];
+let voiceChannels = [];
 let loadedMessages = [];
 let nextBeforeMessageId = null;
 let hasMoreMessages = false;
@@ -64,6 +65,7 @@ function setInspector() {
     document.getElementById('inspectorGuildName').textContent = selectedGuildName ?? '-';
     document.getElementById('inspectorChannelName').textContent = selectedChannelName ? `# ${selectedChannelName}` : '-';
     document.getElementById('inspectorLoadedCount').textContent = `${loadedMessages.length} message${loadedMessages.length === 1 ? '' : 's'}`;
+    renderVoicePresence();
 }
 
 function setMessageMeta() {
@@ -85,7 +87,6 @@ function setMessageMeta() {
 function updateLoadOlderButton() {
     const button = document.getElementById('loadOlderButton');
     if (!button) return;
-
     button.disabled = !selectedChannelId || !hasMoreMessages || !nextBeforeMessageId;
 }
 
@@ -169,11 +170,14 @@ function renderGuildRail() {
             loadedMessages = [];
             nextBeforeMessageId = null;
             hasMoreMessages = false;
+            voiceChannels = [];
 
             renderGuildRail();
             renderMessages([]);
             renderChannels();
+            setInspector();
             await loadChannels();
+            await loadVoiceChannels();
         };
 
         host.append(button);
@@ -263,6 +267,7 @@ function renderChannels() {
 
                 document.getElementById('currentChannel').textContent = `# ${channel.name}`;
                 renderChannels();
+                setInspector();
                 await loadMessages(true, { scrollMode: 'bottom' });
             };
 
@@ -278,6 +283,89 @@ function renderChannels() {
 async function loadChannels() {
     allChannels = await getJson(`/api/channels${selectedGuildId ? `?guildId=${encodeURIComponent(selectedGuildId)}` : ''}`);
     renderChannels();
+}
+
+async function loadVoiceChannels() {
+    voiceChannels = await getJson(`/api/voice${selectedGuildId ? `?guildId=${encodeURIComponent(selectedGuildId)}` : ''}`);
+    renderVoicePresence();
+}
+
+function createVoiceMember(member) {
+    const row = el('div', 'voice-member');
+
+    if (member.avatarUrl) {
+        const image = document.createElement('img');
+        image.className = 'voice-avatar';
+        image.src = member.avatarUrl;
+        image.alt = member.displayName;
+        row.append(image);
+    } else {
+        row.append(el('div', 'voice-avatar-fallback', initials(member.displayName)));
+    }
+
+    const info = el('div', 'voice-member-info');
+    info.append(el('div', 'voice-member-name', member.displayName));
+
+    const flags = [];
+    if (member.isMuted) flags.push('Muted');
+    if (member.isDeafened) flags.push('Deafened');
+    if (member.isStreaming) flags.push('Streaming');
+    if (member.isVideoEnabled) flags.push('Video');
+
+    info.append(el('div', 'voice-member-meta', flags.length ? flags.join(' • ') : 'Connected'));
+    row.append(info);
+
+    return row;
+}
+
+function renderVoicePresence() {
+    const summary = document.getElementById('voiceSummary');
+    const host = document.getElementById('voicePresenceList');
+    if (!summary || !host) return;
+
+    const guildVoiceChannels = voiceChannels.filter(channel => channel.guildId === selectedGuildId);
+    const activeVoiceChannels = guildVoiceChannels.filter(channel => channel.connectedCount > 0);
+    const totalConnected = activeVoiceChannels.reduce((sum, channel) => sum + channel.connectedCount, 0);
+
+    if (!selectedGuildId) {
+        summary.textContent = 'Select a server.';
+        host.innerHTML = '';
+        return;
+    }
+
+    if (!guildVoiceChannels.length) {
+        summary.textContent = 'No voice channels found.';
+        host.innerHTML = '';
+        return;
+    }
+
+    if (!activeVoiceChannels.length) {
+        summary.textContent = 'Nobody is currently connected.';
+        host.innerHTML = '';
+        return;
+    }
+
+    summary.textContent = `${totalConnected} connected across ${activeVoiceChannels.length} voice channel${activeVoiceChannels.length === 1 ? '' : 's'}`;
+    host.innerHTML = '';
+
+    for (const channel of activeVoiceChannels) {
+        const card = el('div', 'voice-channel-card');
+        const header = el('div', 'voice-channel-header');
+        const titleWrap = el('div', 'voice-channel-title-wrap');
+        titleWrap.append(el('div', 'voice-channel-name', channel.name));
+        titleWrap.append(el('div', 'voice-channel-meta', channel.categoryName || 'Voice channel'));
+        header.append(titleWrap);
+        header.append(el('div', 'voice-channel-count', `${channel.connectedCount}`));
+        card.append(header);
+
+        const members = el('div', 'voice-members');
+        for (const member of channel.members) {
+            members.append(createVoiceMember(member));
+        }
+
+        card.append(members);
+        host.append(card);
+    }
 }
 
 function createAvatar(message) {
@@ -451,8 +539,6 @@ async function refreshLatestMessages(options = {}) {
 
     const container = getMessageScrollHost();
 
-    // Prevent the periodic refresh from snapping the user back to the newest page
-    // while they are reading older messages above the bottom.
     if (!isNearBottom(container)) {
         return;
     }
@@ -489,6 +575,7 @@ async function refreshAll() {
     await loadStatus();
     await loadGuilds();
     await loadChannels();
+    await loadVoiceChannels();
 
     if (selectedChannelId) {
         await loadMessages(true, { scrollMode: 'preserve' });
@@ -505,6 +592,10 @@ function startAutoRefresh() {
     refreshTimer = setInterval(() => {
         if (autoRefreshEnabled && selectedChannelId) {
             refreshLatestMessages({ scrollMode: 'preserve' }).catch(() => {});
+        }
+
+        if (selectedGuildId) {
+            loadVoiceChannels().catch(() => {});
         }
 
         loadStatus().catch(() => {});

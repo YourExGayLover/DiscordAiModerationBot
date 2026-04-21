@@ -70,6 +70,49 @@ public sealed class DiscordViewerState
             .ToList();
     }
 
+    public IReadOnlyList<VoiceChannelStateDto> GetVoiceChannels(DiscordSocketClient client, ulong? guildId)
+    {
+        IEnumerable<SocketGuild> guilds = client.Guilds;
+
+        if (_options.PreferredGuildId is ulong preferredGuildId)
+        {
+            guilds = guilds.Where(x => x.Id == preferredGuildId);
+        }
+
+        if (guildId.HasValue)
+        {
+            guilds = guilds.Where(x => x.Id == guildId.Value);
+        }
+
+        return guilds
+            .SelectMany(g =>
+                g.VoiceChannels
+                    .OrderBy(c => c.Category is null ? int.MaxValue : c.Category.Position)
+                    .ThenBy(c => c.Category is null ? 1 : 0)
+                    .ThenBy(c => c.Position)
+                    .ThenBy(c => c.Name)
+                    .Select(c => new VoiceChannelStateDto(
+                        c.Id.ToString(),
+                        c.Name,
+                        g.Id.ToString(),
+                        g.Name,
+                        c.Category?.Name,
+                        c.Position,
+                        c.ConnectedUsers.Count,
+                        c.ConnectedUsers
+                            .OrderBy(u => u.Nickname ?? u.GlobalName ?? u.Username)
+                            .Select(u => new VoiceMemberDto(
+                                u.Id.ToString(),
+                                u.Nickname ?? u.GlobalName ?? u.Username,
+                                u.GetDisplayAvatarUrl(size: 64) ?? u.GetDefaultAvatarUrl(),
+                                u.IsMuted || u.IsSelfMuted,
+                                u.IsDeafened || u.IsSelfDeafened,
+                                u.VoiceChannel?.ConnectedUsers.Any(x => x.Id == u.Id && x.IsStreaming) == true || u.IsStreaming,
+                                u.IsVideoing))
+                            .ToList())))
+            .ToList();
+    }
+
     public async Task<MessagePageDto> GetMessagePageAsync(ulong channelId, ulong? beforeMessageId)
     {
         if (_client.GetChannel(channelId) is not SocketTextChannel channel)
