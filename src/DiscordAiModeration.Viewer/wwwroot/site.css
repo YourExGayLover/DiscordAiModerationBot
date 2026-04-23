@@ -534,12 +534,37 @@ input {
 }
 
 
-#voiceRefreshButton{
+.voice-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.voice-panel-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.voice-panel-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+#voiceRefreshButton {
   background: var(--panel-soft);
   color: var(--text);
-  padding: 8px 10px;
-  margin-top:10px;
+  padding: 8px 12px;
+  flex: 0 0 auto;
 }
-#voiceRefreshButton:disabled{
- opacity:.65;
+
+#voiceRefreshButton:hover {
+  background: var(--accent);
+}
+
+#voiceRefreshButton:disabled {
+  opacity: 0.7;
+  cursor: wait;
 }

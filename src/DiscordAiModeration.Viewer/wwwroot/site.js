@@ -509,12 +509,41 @@ function renderVoice(snapshot) {
 
 async function loadVoice() {
   const btn = document.getElementById('voiceRefreshButton');
-  if (btn){ btn.disabled=true; btn.textContent='…'; }
-  try{
+  const summary = document.getElementById('voiceSummary');
+  const meta = document.getElementById('voiceLastUpdated');
+  const originalSummary = summary ? summary.textContent : '';
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Refreshing...';
+  }
+
+  if (summary) {
+    summary.textContent = 'Refreshing voice channels...';
+  }
+
+  try {
     const snapshot = await getJson(`/api/voice${selectedGuildId ? `?guildId=${encodeURIComponent(selectedGuildId)}` : ''}`);
     renderVoice(snapshot);
+
+    if (meta) {
+      meta.textContent = `Last refreshed: ${new Date().toLocaleTimeString()}`;
+    }
+  } catch (error) {
+    if (summary) {
+      summary.textContent = originalSummary || 'Failed to refresh voice channels.';
+    }
+
+    if (meta) {
+      meta.textContent = `Refresh failed: ${error.message}`;
+    }
+
+    throw error;
   } finally {
-    if (btn){ btn.disabled=false; btn.textContent='↻'; }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Refresh';
+    }
   }
 }
 
@@ -653,6 +682,11 @@ document.getElementById('autoRefreshToggle').addEventListener('change', event =>
 document.getElementById('closeProfileButton').addEventListener('click', closeProfile);
 document.querySelector('#profileOverlay .profile-backdrop').addEventListener('click', closeProfile);
 
+document.getElementById('voiceRefreshButton').addEventListener('click', () => {
+  loadVoice().catch(error => setStatus(error.message, true));
+});
+
+
 const messageScrollHost = getMessageScrollHost();
 messageScrollHost.addEventListener('scroll', () => {
   if (!selectedChannelId || !hasMoreMessages || !nextBeforeMessageId || isLoadingOlderMessages || isLoadingMessages) {
@@ -662,10 +696,6 @@ messageScrollHost.addEventListener('scroll', () => {
   if (messageScrollHost.scrollTop <= 80) {
     loadMessages(false).catch(error => setStatus(error.message, true));
   }
-});
-
-document.getElementById('voiceRefreshButton').addEventListener('click', () => {
-  loadVoice().catch(error => setStatus(error.message, true));
 });
 
 refreshAll()
