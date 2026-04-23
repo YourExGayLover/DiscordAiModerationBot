@@ -532,3 +532,14 @@ input {
   font-weight: 700;
   margin-bottom: 6px;
 }
+
+
+#voiceRefreshButton{
+  background: var(--panel-soft);
+  color: var(--text);
+  padding: 8px 10px;
+  margin-top:10px;
+}
+#voiceRefreshButton:disabled{
+ opacity:.65;
+}

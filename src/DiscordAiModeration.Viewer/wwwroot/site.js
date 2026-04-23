@@ -508,8 +508,14 @@ function renderVoice(snapshot) {
 }
 
 async function loadVoice() {
-  const snapshot = await getJson(`/api/voice${selectedGuildId ? `?guildId=${encodeURIComponent(selectedGuildId)}` : ''}`);
-  renderVoice(snapshot);
+  const btn = document.getElementById('voiceRefreshButton');
+  if (btn){ btn.disabled=true; btn.textContent='…'; }
+  try{
+    const snapshot = await getJson(`/api/voice${selectedGuildId ? `?guildId=${encodeURIComponent(selectedGuildId)}` : ''}`);
+    renderVoice(snapshot);
+  } finally {
+    if (btn){ btn.disabled=false; btn.textContent='↻'; }
+  }
 }
 
 function createRoleChip(roleName) {
@@ -656,6 +662,10 @@ messageScrollHost.addEventListener('scroll', () => {
   if (messageScrollHost.scrollTop <= 80) {
     loadMessages(false).catch(error => setStatus(error.message, true));
   }
+});
+
+document.getElementById('voiceRefreshButton').addEventListener('click', () => {
+  loadVoice().catch(error => setStatus(error.message, true));
 });
 
 refreshAll()
