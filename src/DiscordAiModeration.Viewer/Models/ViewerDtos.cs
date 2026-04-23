@@ -15,7 +15,10 @@ public sealed record ChannelSummaryDto(
     int Position,
     int RecentMessageCount);
 
-public sealed record AttachmentDto(string FileName, string Url, long? Size);
+public sealed record AttachmentDto(
+    string FileName,
+    string Url,
+    long? Size);
 
 public sealed record MessageDto(
     string Id,
@@ -34,20 +37,42 @@ public sealed record MessagePageDto(
     string? NextBeforeMessageId);
 
 public sealed record VoiceMemberDto(
-    string Id,
+    string UserId,
     string DisplayName,
     string? AvatarUrl,
-    bool IsMuted,
-    bool IsDeafened,
     bool IsStreaming,
-    bool IsVideoEnabled);
+    bool IsSelfMuted,
+    bool IsSelfDeafened,
+    bool IsServerMuted,
+    bool IsServerDeafened,
+    bool IsSuppressed);
 
-public sealed record VoiceChannelStateDto(
-    string Id,
-    string Name,
+public sealed record VoiceChannelDto(
+    string ChannelId,
+    string ChannelName,
+    IReadOnlyList<VoiceMemberDto> Members);
+
+public sealed record VoiceSnapshotDto(
     string GuildId,
     string GuildName,
-    string? CategoryName,
-    int Position,
     int ConnectedCount,
-    IReadOnlyList<VoiceMemberDto> Members);
+    int ActiveChannelCount,
+    IReadOnlyList<VoiceChannelDto> Channels);
+
+public sealed record UserProfileDto(
+    string UserId,
+    string GuildId,
+    string DisplayName,
+    string Username,
+    string? GlobalName,
+    string? Nickname,
+    string? AvatarUrl,
+    bool IsBot,
+    string? JoinedAt,
+    string CreatedAt,
+    IReadOnlyList<string> Roles,
+    bool IsInVoice,
+    string? VoiceChannelName,
+    bool IsStreaming,
+    bool IsMuted,
+    bool IsDeafened);

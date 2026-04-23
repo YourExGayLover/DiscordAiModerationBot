@@ -1,76 +1,89 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Discord AI Moderation Viewer</title>
-    <link rel="stylesheet" href="/site.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Discord AI Moderation Viewer</title>
+  <link rel="stylesheet" href="/site.css" />
 </head>
 <body>
-    <div class="app-shell">
-        <aside class="guild-rail">
-            <div class="brand">DM</div>
-            <div id="guildRail" class="guild-rail-list"></div>
-        </aside>
+  <div class="app-shell">
+    <aside class="guild-rail-pane">
+      <div class="guild-rail-header">DM</div>
+      <div id="guildRail" class="guild-rail-scroll"></div>
+    </aside>
 
-        <aside class="channel-sidebar">
-            <header class="channel-sidebar-header">
-                <div>
-                    <div id="guildName" class="guild-name">Select a server</div>
-                    <div id="status" class="sidebar-status">Connecting…</div>
-                </div>
-                <button id="refreshAllButton" class="icon-button" type="button" title="Refresh all">↻</button>
-            </header>
+    <aside class="channel-pane">
+      <div class="pane-header">
+        <div id="guildName" class="pane-title">Select a server</div>
+        <div id="status" class="pane-subtitle">Connecting…</div>
+      </div>
+      <div class="channel-toolbar">
+        <input id="channelSearch" type="text" placeholder="Search channels" />
+        <button id="refreshAllButton" type="button" title="Refresh all">↻</button>
+      </div>
+      <div id="channels" class="channel-scroll"></div>
+    </aside>
 
-            <div class="sidebar-tools">
-                <input id="channelSearch" type="search" placeholder="Search channels" autocomplete="off" />
-            </div>
+    <main class="message-pane">
+      <div class="message-header">
+        <div>
+          <div id="currentChannel" class="message-title">Select a channel</div>
+          <div id="messageMeta" class="message-subtitle">Choose a channel to load the newest page.</div>
+        </div>
+        <div class="message-header-actions">
+          <button id="refreshButton" type="button">Refresh</button>
+          <label class="auto-refresh-toggle">
+            <input id="autoRefreshToggle" type="checkbox" checked />
+            Auto refresh
+          </label>
+        </div>
+      </div>
+      <div id="messages" class="message-scroll"></div>
+    </main>
 
-            <div id="channels" class="channel-groups"></div>
-        </aside>
+    <aside class="details-pane">
+      <div class="pane-header">
+        <div class="pane-title">Details</div>
+      </div>
 
-        <main class="chat-panel">
-            <header class="chat-header">
-                <div class="chat-title-wrap">
-                    <div id="currentChannel" class="chat-title">Select a channel</div>
-                    <div id="messageMeta" class="chat-subtitle"></div>
-                </div>
-                <div class="chat-actions">
-                    <button id="refreshButton" type="button">Refresh</button>
-                </div>
-            </header>
+      <section class="inspector-card">
+        <div class="inspector-row">
+          <span class="inspector-label">Server</span>
+          <span id="inspectorGuildName" class="inspector-value">-</span>
+        </div>
+        <div class="inspector-row">
+          <span class="inspector-label">Channel</span>
+          <span id="inspectorChannelName" class="inspector-value">-</span>
+        </div>
+        <div class="inspector-row">
+          <span class="inspector-label">Loaded</span>
+          <span id="inspectorLoadedCount" class="inspector-value">0 messages</span>
+        </div>
+        <div class="inspector-row">
+          <span class="inspector-label">Ordering</span>
+          <span class="inspector-value">Newest at bottom</span>
+        </div>
+      </section>
 
-            <section id="messages" class="messages"></section>
-        </main>
+      <section class="voice-panel">
+        <div class="voice-panel-header">
+          <div class="voice-panel-title">Voice calls</div>
+          <div id="voiceSummary" class="voice-panel-summary">No one is connected.</div>
+        </div>
+        <div id="voiceChannels" class="voice-channel-list"></div>
+      </section>
+    </aside>
+  </div>
 
-        <aside class="inspector">
-            <header class="inspector-header">Details</header>
-            <div id="inspectorContent" class="inspector-content">
-                <div class="inspector-card">
-                    <div class="inspector-label">Server</div>
-                    <div id="inspectorGuildName" class="inspector-value">-</div>
-                </div>
-                <div class="inspector-card">
-                    <div class="inspector-label">Channel</div>
-                    <div id="inspectorChannelName" class="inspector-value">-</div>
-                </div>
-                <div class="inspector-card">
-                    <div class="inspector-label">Loaded</div>
-                    <div id="inspectorLoadedCount" class="inspector-value">0 messages</div>
-                </div>
-                <div class="inspector-card">
-                    <div class="inspector-label">Ordering</div>
-                    <div class="inspector-value">Newest at bottom</div>
-                </div>
-                <div class="inspector-card voice-card">
-                    <div class="inspector-label">Voice calls</div>
-                    <div id="voiceSummary" class="inspector-value">Loading…</div>
-                    <div id="voicePresenceList" class="voice-presence-list"></div>
-                </div>
-            </div>
-        </aside>
+  <div id="profileOverlay" class="profile-overlay hidden">
+    <div class="profile-backdrop"></div>
+    <div class="profile-modal">
+      <button id="closeProfileButton" class="profile-close-button" type="button">×</button>
+      <div id="profileContent" class="profile-content"></div>
     </div>
+  </div>
 
-    <script src="/site.js"></script>
+  <script src="/site.js"></script>
 </body>
 </html>

@@ -31,6 +31,22 @@ public static class ViewerEndpoints
             return Results.Ok(state.GetChannels(client, parsedGuildId));
         });
 
+        app.MapGet("/api/channels/{channelId}/messages", async (string channelId, string? beforeMessageId, DiscordViewerState state) =>
+        {
+            if (!ulong.TryParse(channelId, out var parsedChannelId))
+            {
+                return Results.BadRequest("Invalid channel id.");
+            }
+
+            ulong? parsedBeforeMessageId = null;
+            if (!string.IsNullOrWhiteSpace(beforeMessageId) && ulong.TryParse(beforeMessageId, out var parsedBefore))
+            {
+                parsedBeforeMessageId = parsedBefore;
+            }
+
+            return Results.Ok(await state.GetMessagePageAsync(parsedChannelId, parsedBeforeMessageId));
+        });
+
         app.MapGet("/api/voice", (string? guildId, DiscordSocketClient client, DiscordViewerState state) =>
         {
             ulong? parsedGuildId = null;
@@ -40,29 +56,23 @@ public static class ViewerEndpoints
                 parsedGuildId = parsed;
             }
 
-            return Results.Ok(state.GetVoiceChannels(client, parsedGuildId));
+            return Results.Ok(state.GetVoiceSnapshot(client, parsedGuildId));
         });
 
-        app.MapGet("/api/channels/{channelId}/messages", async (string channelId, string? beforeMessageId, DiscordViewerState state) =>
+        app.MapGet("/api/profile", (string? guildId, string? userId, DiscordSocketClient client, DiscordViewerState state) =>
         {
-            if (!ulong.TryParse(channelId, out var parsedChannelId))
+            if (!ulong.TryParse(guildId, out var parsedGuildId))
             {
-                return Results.BadRequest("Invalid channel id.");
+                return Results.BadRequest("Invalid guild id.");
             }
 
-            ulong? parsedBeforeMessageId = null;
-            if (!string.IsNullOrWhiteSpace(beforeMessageId))
+            if (!ulong.TryParse(userId, out var parsedUserId))
             {
-                if (!ulong.TryParse(beforeMessageId, out var parsedBefore))
-                {
-                    return Results.BadRequest("Invalid beforeMessageId.");
-                }
-
-                parsedBeforeMessageId = parsedBefore;
+                return Results.BadRequest("Invalid user id.");
             }
 
-            var page = await state.GetMessagePageAsync(parsedChannelId, parsedBeforeMessageId);
-            return Results.Ok(page);
+            var profile = state.GetUserProfile(client, parsedGuildId, parsedUserId);
+            return profile is null ? Results.NotFound() : Results.Ok(profile);
         });
 
         return app;

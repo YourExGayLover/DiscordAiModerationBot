@@ -55,7 +55,7 @@ public sealed class DiscordViewerState
         return guilds
             .SelectMany(g =>
                 g.TextChannels
-                    .OrderBy(c => c.Category is null ? int.MaxValue : c.Category.Position)
+                    .OrderBy(c => c.Category?.Position ?? int.MaxValue)
                     .ThenBy(c => c.Category is null ? 1 : 0)
                     .ThenBy(c => c.Position)
                     .ThenBy(c => c.Name)
@@ -67,49 +67,6 @@ public sealed class DiscordViewerState
                         c.Category?.Name,
                         c.Position,
                         _liveMessagesByChannel.TryGetValue(c.Id, out var q) ? q.Count : 0)))
-            .ToList();
-    }
-
-    public IReadOnlyList<VoiceChannelStateDto> GetVoiceChannels(DiscordSocketClient client, ulong? guildId)
-    {
-        IEnumerable<SocketGuild> guilds = client.Guilds;
-
-        if (_options.PreferredGuildId is ulong preferredGuildId)
-        {
-            guilds = guilds.Where(x => x.Id == preferredGuildId);
-        }
-
-        if (guildId.HasValue)
-        {
-            guilds = guilds.Where(x => x.Id == guildId.Value);
-        }
-
-        return guilds
-            .SelectMany(g =>
-                g.VoiceChannels
-                    .OrderBy(c => c.Category is null ? int.MaxValue : c.Category.Position)
-                    .ThenBy(c => c.Category is null ? 1 : 0)
-                    .ThenBy(c => c.Position)
-                    .ThenBy(c => c.Name)
-                    .Select(c => new VoiceChannelStateDto(
-                        c.Id.ToString(),
-                        c.Name,
-                        g.Id.ToString(),
-                        g.Name,
-                        c.Category?.Name,
-                        c.Position,
-                        c.ConnectedUsers.Count,
-                        c.ConnectedUsers
-                            .OrderBy(u => u.Nickname ?? u.GlobalName ?? u.Username)
-                            .Select(u => new VoiceMemberDto(
-                                u.Id.ToString(),
-                                u.Nickname ?? u.GlobalName ?? u.Username,
-                                u.GetDisplayAvatarUrl(size: 64) ?? u.GetDefaultAvatarUrl(),
-                                u.IsMuted || u.IsSelfMuted,
-                                u.IsDeafened || u.IsSelfDeafened,
-                                u.VoiceChannel?.ConnectedUsers.Any(x => x.Id == u.Id && x.IsStreaming) == true || u.IsStreaming,
-                                u.IsVideoing))
-                            .ToList())))
             .ToList();
     }
 
@@ -158,6 +115,94 @@ public sealed class DiscordViewerState
         var queue = _liveMessagesByChannel.GetOrAdd(message.Channel.Id, _ => new ConcurrentQueue<MessageDto>());
         queue.Enqueue(ToDto(message.Channel.Id, message));
         Trim(queue);
+    }
+
+    public VoiceSnapshotDto GetVoiceSnapshot(DiscordSocketClient client, ulong? guildId)
+    {
+        IEnumerable<SocketGuild> guilds = client.Guilds;
+
+        if (_options.PreferredGuildId is ulong preferredGuildId)
+        {
+            guilds = guilds.Where(x => x.Id == preferredGuildId);
+        }
+
+        if (guildId.HasValue)
+        {
+            guilds = guilds.Where(x => x.Id == guildId.Value);
+        }
+
+        var guild = guilds.FirstOrDefault();
+        if (guild is null)
+        {
+            return new VoiceSnapshotDto(string.Empty, string.Empty, 0, 0, Array.Empty<VoiceChannelDto>());
+        }
+
+        var channels = guild.VoiceChannels
+            .OrderBy(vc => vc.Position)
+            .Select(vc => new VoiceChannelDto(
+                vc.Id.ToString(),
+                vc.Name,
+                vc.ConnectedUsers
+                    .OrderBy(u => u.DisplayName ?? u.Username)
+                    .Select(u => new VoiceMemberDto(
+                        u.Id.ToString(),
+                        u.DisplayName ?? u.Username,
+                        u.GetDisplayAvatarUrl(size: 80) ?? u.GetDefaultAvatarUrl(),
+                        u.IsStreaming,
+                        u.IsSelfMuted,
+                        u.IsSelfDeafened,
+                        u.IsMuted,
+                        u.IsDeafened,
+                        u.IsSuppressed))
+                    .ToList()))
+            .Where(vc => vc.Members.Count > 0)
+            .ToList();
+
+        return new VoiceSnapshotDto(
+            guild.Id.ToString(),
+            guild.Name,
+            channels.Sum(c => c.Members.Count),
+            channels.Count,
+            channels);
+    }
+
+    public UserProfileDto? GetUserProfile(DiscordSocketClient client, ulong guildId, ulong userId)
+    {
+        var guild = client.Guilds.FirstOrDefault(g => g.Id == guildId);
+        if (guild is null)
+        {
+            return null;
+        }
+
+        var user = guild.GetUser(userId);
+        if (user is null)
+        {
+            return null;
+        }
+
+        var roles = user.Roles
+            .Where(r => !r.IsEveryone)
+            .OrderByDescending(r => r.Position)
+            .Select(r => r.Name)
+            .ToList();
+
+        return new UserProfileDto(
+            user.Id.ToString(),
+            guild.Id.ToString(),
+            user.DisplayName ?? user.Username,
+            user.Username,
+            user.GlobalName,
+            user.Nickname,
+            user.GetDisplayAvatarUrl(size: 256) ?? user.GetDefaultAvatarUrl(),
+            user.IsBot,
+            user.JoinedAt?.LocalDateTime.ToString("g"),
+            user.CreatedAt.LocalDateTime.ToString("g"),
+            roles,
+            user.VoiceChannel is not null,
+            user.VoiceChannel?.Name,
+            user.IsStreaming,
+            user.IsMuted || user.IsSelfMuted,
+            user.IsDeafened || user.IsSelfDeafened);
     }
 
     private MessageDto ToDto(ulong channelId, IMessage message)
